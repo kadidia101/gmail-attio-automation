@@ -19,7 +19,7 @@ PERSON_OBJECT_SLUG = "people"   # Your People object
 EMAIL_OBJECT_SLUG = "emails"    # Your Email Record object
 EMAIL_RECORD_PERSON_FIELD_SLUG = "person"  # Record-reference field on Email Record linking to Person
 
-ATTIO_PERSON_SEARCH = f"https://api.attio.com/v2/objects/{PERSON_OBJECT_SLUG}/records/search"
+ATTIO_PERSON_SEARCH = f"https://api.attio.com/v2/objects/{PERSON_OBJECT_SLUG}/records"
 ATTIO_EMAIL_ENDPOINT = f"https://api.attio.com/v2/objects/{EMAIL_OBJECT_SLUG}/records"
 
 ATTIO_TOKEN = os.environ["ATTIO_TOKEN"]
@@ -79,10 +79,12 @@ for msg in messages:
     # SEARCH FOR PERSON
     # =============================
     search_payload = {
-        "filter": {
-            "attribute": "email_addresses",
-            "operator": "contains",
-            "value": sender
+        "data": {
+            "filter": {
+                "attribute": "email_addresses",
+                "operator": "contains",
+                "value": sender
+            }
         }
     }
 
