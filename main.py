@@ -72,7 +72,7 @@ for msg in messages:
     payload = {
         "data": {
             "values": {
-                "title": subject,
+                "email": subject,
                 "urls": body
             }
         }
