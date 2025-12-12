@@ -65,12 +65,15 @@ for msg in messages:
     # SEND TO ATTIO
     # =============================
     payload = {
-        "data": {
+    "data": {
+        "values": {
             "from": sender,
             "subject": subject,
             "body": body
+            }
         }
     }
+
     headers = {
         "Authorization": f"Bearer {ATTIO_TOKEN}",
         "Content-Type": "application/json"
