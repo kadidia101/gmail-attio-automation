@@ -84,6 +84,18 @@ for msg in messages:
         "filter[value]": sender
     }
 
+    resp = requests.get(f"https://api.attio.com/v2/objects/{PERSON_OBJECT_SLUG}/records", headers=headers, params=params)
+
+    if resp.status_code != 200:
+        print(f"Failed to search person for {sender}: {resp.text}")
+        continue
+
+    if not resp_data.get("data"):
+        print(f"No person found for email {sender}, skipping...")
+        continue
+
+    person_id_obj = resp_data["data"][0]["id"]
+
     resp = requests.post(ATTIO_PERSON_SEARCH, headers=headers, json=search_payload)
     if resp.status_code != 200:
         print(f"Failed to search person for {sender}: {resp.text}")
