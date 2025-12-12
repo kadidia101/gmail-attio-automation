@@ -13,7 +13,7 @@ REFRESH_TOKEN = "YOUR_REFRESH_TOKEN"
 
 GMAIL_USER = "me"  # Gmail account receiving the Google Group emails
 
-ATTIO_ENDPOINT = "https://api.attio.com/v1/workspaces/<workspace-id>/emails"  # Attio endpoint URL
+ATTIO_ENDPOINT = "https://api.attio.com/v2/objects/emails/records"  # Attio endpoint URL
 ATTIO_TOKEN = "YOUR_PERMANENT_ACCESS_TOKEN"  # Attio API key / permanent token
 
 # Optional: label to mark processed emails
