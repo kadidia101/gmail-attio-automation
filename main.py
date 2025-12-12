@@ -70,10 +70,10 @@ for msg in messages:
             "values": {
                 "email_addresses": [
                     {
-                        "original_email_address": sender,
-                        "email_address": sender,
-                        "active_from": datetime.utcnow().isoformat() + "Z",
-                        "attribute_type": "email-address"
+                    "original_email_address": sender,
+                    "email_address": sender,
+                    "active_from": datetime.utcnow().isoformat() + "Z",
+                    "attribute_type": "email-address"
                     }
                 ],
                 "title": subject,
