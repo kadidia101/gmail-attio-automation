@@ -78,14 +78,10 @@ for msg in messages:
     # =============================
     # SEARCH FOR PERSON
     # =============================
-    search_payload = {
-        "data": {
-            "filter": {
-                "attribute": "email_addresses",
-                "operator": "contains",
-                "value": sender
-            }
-        }
+    params = {
+        "filter[attribute]": "email_addresses",
+        "filter[operator]": "contains",
+        "filter[value]": sender
     }
 
     resp = requests.post(ATTIO_PERSON_SEARCH, headers=headers, json=search_payload)
