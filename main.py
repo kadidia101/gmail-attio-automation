@@ -68,16 +68,9 @@ for msg in messages:
     payload = {
         "data": {
             "values": {
-                "email_addresses": [
-                    {
-                    "original_email_address": sender,
-                    "email_address": sender,
-                    "active_from": datetime.utcnow().isoformat() + "Z",
-                    "attribute_type": "email-address"
-                    }
-                ],
-                "title": subject,
-                "urls": body
+                "email": sender,   # slug for Email field
+                "title": subject,  # slug for Email Name field
+                "urls": body       # slug for URLs field
             }
         }
     }
