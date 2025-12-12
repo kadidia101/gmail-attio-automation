@@ -2,6 +2,7 @@ import os
 import base64
 import json
 import requests
+from datetime import datetime
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
@@ -65,14 +66,22 @@ for msg in messages:
     # SEND TO ATTIO
     # =============================
     payload = {
-    "data": {
-        "values": {
-            "Email": subject,
-            "Email Name": subject,
-            "URLs": body
+        "data": {
+            "values": {
+                "email_addresses": [
+                    {
+                        "original_email_address": sender,
+                        "email_address": sender,
+                        "active_from": datetime.utcnow().isoformat() + "Z",
+                        "attribute_type": "email-address"
+                    }
+                ],
+                "title": subject,
+                "urls": body
             }
         }
     }
+
 
     headers = {
         "Authorization": f"Bearer {ATTIO_TOKEN}",
