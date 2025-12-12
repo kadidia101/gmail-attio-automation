@@ -6,25 +6,17 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
 # =============================
-# CONFIGURATION - fill these in
+# CONFIGURATION
 # =============================
 CLIENT_ID = os.environ["GMAIL_CLIENT_ID"]
 CLIENT_SECRET = os.environ["GMAIL_CLIENT_SECRET"]
 REFRESH_TOKEN = os.environ["GMAIL_REFRESH_TOKEN"]
 
-GMAIL_USER = "me"  # Gmail account receiving the Google Group emails
+GMAIL_USER = "me"
 
-# Attio object slugs
-PERSON_OBJECT_SLUG = "people"   # Your People object
-EMAIL_OBJECT_SLUG = "emails"    # Your Email Record object
-EMAIL_RECORD_PERSON_FIELD_SLUG = "person"  # Record-reference field on Email Record linking to Person
-
-ATTIO_PERSON_SEARCH = f"https://api.attio.com/v2/objects/{PERSON_OBJECT_SLUG}/records"
-ATTIO_EMAIL_ENDPOINT = f"https://api.attio.com/v2/objects/{EMAIL_OBJECT_SLUG}/records"
-
+ATTIO_EMAIL_ENDPOINT = "https://api.attio.com/v2/objects/emails/records"
 ATTIO_TOKEN = os.environ["ATTIO_TOKEN"]
 
-# Optional: label to mark processed emails
 PROCESSED_LABEL = "Processed"
 
 # =============================
@@ -64,8 +56,7 @@ for msg in messages:
     # Extract headers
     headers_list = message['payload']['headers']
     subject = next((h['value'] for h in headers_list if h['name'] == 'Subject'), "")
-    sender = next((h['value'] for h in headers_list if h['name'] == 'From'), "")
-
+    
     # Extract body (plain text)
     if 'parts' in message['payload']:
         body_part = message['payload']['parts'][0]['body']
@@ -76,53 +67,20 @@ for msg in messages:
         body = base64.urlsafe_b64decode(body_data).decode('utf-8')
 
     # =============================
-    # SEARCH FOR PERSON
+    # CREATE EMAIL RECORD IN ATTIO
     # =============================
-    params = {
-        "filter[attribute]": "email_addresses",
-        "filter[operator]": "contains",
-        "filter[value]": sender
-    }
-
-    resp = requests.get(f"https://api.attio.com/v2/objects/{PERSON_OBJECT_SLUG}/records", headers=headers, params=params)
-
-    if resp.status_code != 200:
-        print(f"Failed to search person for {sender}: {resp.text}")
-        continue
-
-    if not resp_data.get("data"):
-        print(f"No person found for email {sender}, skipping...")
-        continue
-
-    person_id_obj = resp_data["data"][0]["id"]
-
-    resp = requests.post(ATTIO_PERSON_SEARCH, headers=headers, json=search_payload)
-    if resp.status_code != 200:
-        print(f"Failed to search person for {sender}: {resp.text}")
-        continue
-
-    resp_data = resp.json()
-    if not resp_data.get("data"):
-        print(f"No person found for email {sender}, skipping...")
-        continue
-
-    person_id_obj = resp_data["data"][0]["id"]  # contains workspace_id, object_id, record_id
-
-    # =============================
-    # CREATE EMAIL RECORD LINKED TO PERSON
-    # =============================
-    email_payload = {
+    payload = {
         "data": {
             "values": {
                 "title": subject,
-                "urls": body,
-                EMAIL_RECORD_PERSON_FIELD_SLUG: {"id": person_id_obj}  # record-reference
+                "urls": body
             }
         }
     }
 
-    resp = requests.post(ATTIO_EMAIL_ENDPOINT, headers=headers, json=email_payload)
-    if resp.status_code == 200:
+    response = requests.post(ATTIO_EMAIL_ENDPOINT, headers=headers, json=payload)
+
+    if response.status_code == 200:
         print(f"Sent email {msg['id']} to Attio successfully.")
 
         # MARK AS PROCESSED
@@ -136,4 +94,4 @@ for msg in messages:
             body={'removeLabelIds': ['UNREAD'], 'addLabelIds': [PROCESSED_LABEL]}
         ).execute()
     else:
-        print(f"Failed to send email {msg['id']} to Attio: {resp.status_code} {resp.text}")
+        print(f"Failed to send email {msg['id']} to Attio: {response.status_code} {response.text}")
