@@ -67,9 +67,9 @@ for msg in messages:
     payload = {
     "data": {
         "values": {
-            "from": sender,
-            "subject": subject,
-            "body": body
+            "Email": subject,
+            "Email Name": subject,
+            "URLs": body
             }
         }
     }
