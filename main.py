@@ -8,14 +8,14 @@ from googleapiclient.discovery import build
 # =============================
 # CONFIGURATION - fill these in
 # =============================
-CLIENT_ID = os.token["YOUR_CLIENT_ID"]
-CLIENT_SECRET = os.token["YOUR_CLIENT_SECRET"]
-REFRESH_TOKEN = os.token["YOUR_REFRESH_TOKEN"]
+CLIENT_ID = os.token["GMAIL_CLIENT_ID"]
+CLIENT_SECRET = os.token["GMAIL_CLIENT_SECRET"]
+REFRESH_TOKEN = os.token["GMAIL_REFRESH_TOKEN"]
 
 GMAIL_USER = "me"  # Gmail account receiving the Google Group emails
 
 ATTIO_ENDPOINT = "https://api.attio.com/v2/objects/emails/records"  # Attio endpoint URL
-ATTIO_TOKEN = os.token["YOUR_PERMANENT_ACCESS_TOKEN"]  # Attio API key / permanent token
+ATTIO_TOKEN = os.token["ATTIO_TOKEN"]  # Attio API key / permanent token
 
 # Optional: label to mark processed emails
 PROCESSED_LABEL = "Processed"
