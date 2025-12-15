@@ -2,14 +2,14 @@ import os
 import base64
 import requests
 from email.utils import parseaddr
-from google.oauth2 import service_account
+from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
 # =======================
 # CONFIG
 # =======================
-SERVICE_ACCOUNT_FILE = "/home/ec2-user/.secrets/service_account.json"  # path to your service account JSON
-GROUP_EMAIL = "inbox@company.com"              # the Google Group mailbox
+GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+GMAIL_USER = "me"  # your personal Gmail
 
 ATTIO_TOKEN = os.environ["ATTIO_TOKEN"]
 ATTIO_BASE = "https://api.attio.com/v2"
@@ -18,35 +18,45 @@ ATTIO_HEADERS = {
     "Content-Type": "application/json",
 }
 
-SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
-
 # =======================
 # GMAIL SERVICE
 # =======================
 def get_gmail_service():
-    creds = service_account.Credentials.from_service_account_file(
-        SERVICE_ACCOUNT_FILE,
-        scopes=SCOPES,
-        subject=GROUP_EMAIL  # impersonate the Group mailbox
+    creds = Credentials(
+        token=None,
+        refresh_token=os.environ["GMAIL_REFRESH_TOKEN"],
+        client_id=os.environ["GMAIL_CLIENT_ID"],
+        client_secret=os.environ["GMAIL_CLIENT_SECRET"],
+        token_uri="https://oauth2.googleapis.com/token"
     )
-    return build("gmail", "v1", credentials=creds)
+    service = build("gmail", "v1", credentials=creds)
+    return service
 
 # =======================
 # FETCH MESSAGES
 # =======================
-def fetch_group_messages(service, max_results=50):
-    res = service.users().messages().list(
-        userId="me",
-        maxResults=max_results
-    ).execute()
-    return res.get("messages", [])
+def fetch_messages(service, max_results=50, label_ids=None):
+    """Fetches recent messages from Gmail with optional label filtering."""
+    messages = []
+    request = service.users().messages().list(
+        userId=GMAIL_USER,
+        maxResults=max_results,
+        labelIds=label_ids
+    )
+
+    while request:
+        response = request.execute()
+        messages.extend(response.get("messages", []))
+        request = service.users().messages().list_next(request, response)
+
+    return messages
 
 # =======================
 # PARSE EMAIL
 # =======================
 def parse_message(service, msg_id):
     msg = service.users().messages().get(
-        userId="me",
+        userId=GMAIL_USER,
         id=msg_id,
         format="full"
     ).execute()
@@ -139,9 +149,9 @@ def create_email_record(person_id, email):
 # =======================
 # MAIN SYNC
 # =======================
-def sync_group_to_attio():
+def sync_personal_gmail_to_attio():
     service = get_gmail_service()
-    messages = fetch_group_messages(service)
+    messages = fetch_messages(service)
     print(f"Found {len(messages)} messages")
 
     for m in messages:
@@ -158,4 +168,4 @@ def sync_group_to_attio():
 # ENTRYPOINT
 # =======================
 if __name__ == "__main__":
-    sync_group_to_attio()
+    sync_personal_gmail_to_attio()
