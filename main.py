@@ -226,9 +226,9 @@ def sync_group_to_attio(max_results=50):
     for m in messages:
         email = parse_message(service, m["id"])
         # Filter only emails coming from the group (optional if inbox is dedicated)
-        if GROUP_EMAIL not in email["body"] and email["from_email"] != GROUP_EMAIL:
-            logging.info("Skipping email not from group: %s", email["from_email"])
-            continue
+        #if GROUP_EMAIL not in email["body"] and email["from_email"] != GROUP_EMAIL:
+        #    logging.info("Skipping email not from group: %s", email["from_email"])
+        #    continue
 
         # Print message ID
         logging.info("Processing message ID: %s", email.get("message_id"))
