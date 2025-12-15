@@ -1,146 +1,140 @@
+import logging
 import os
 import base64
-import logging
-from email.utils import parseaddr
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
 import requests
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
 
-# =======================
-# CONFIG
-# =======================
-SERVICE_ACCOUNT_FILE = "/home/ec2-user/.secrets/service_account.json"
-GROUP_EMAIL = "kadidia.sylla@mithrildefense.com"  # Your Google Group
-ATTIO_TOKEN = os.environ["ATTIO_TOKEN"]
-ATTIO_BASE = "https://api.attio.com/v2"
-ATTIO_HEADERS = {
-    "Authorization": f"Bearer {ATTIO_TOKEN}",
-    "Content-Type": "application/json",
+# ------------------ CONFIG ------------------
+ATTIO_API_KEY = "ATTIO_TOKEN"
+ATTIO_BASE_URL = "https://api.attio.com/v2"
+GROUP_EMAIL = "kadidia.sylla@mithrildefense.com"  # Only process emails from this group
+GMAIL_USER = "me"  # Gmail API 'me' refers to the authenticated user
+
+HEADERS = {
+    "Authorization": f"Bearer {ATTIO_API_KEY}",
+    "Content-Type": "application/json"
 }
-SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 
+# ------------------ LOGGING ------------------
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
-# =======================
-# GMAIL SERVICE
-# =======================
+# ------------------ ATTIO HELPERS ------------------
+
+def assert_person(name, email):
+    payload = {"values": {"name": name, "primary_email_address": email}}
+    try:
+        r = requests.post(f"{ATTIO_BASE_URL}/objects/people/records/assert", headers=HEADERS, json=payload)
+        r.raise_for_status()
+        return r.json()  # contains 'record_id'
+    except requests.HTTPError as e:
+        logging.warning("Cannot assert person %s: %s", email, e.response.text)
+        return None
+
+def assert_company(domain):
+    payload = {"values": {"name": domain, "domain": domain}}
+    try:
+        r = requests.post(f"{ATTIO_BASE_URL}/objects/companies/records/assert", headers=HEADERS, json=payload)
+        r.raise_for_status()
+        return r.json().get("record_id")
+    except requests.HTTPError as e:
+        logging.warning("Cannot assert company for domain %s: %s", domain, e.response.text)
+        return None
+
+def create_email_record(email_data, person_id, company_id=None):
+    payload = {
+        "values": {
+            "subject": email_data["subject"],
+            "from": email_data["from_email"],
+            "body": email_data["body"],
+            "to": email_data.get("to", []),
+            "person": {"record_id": person_id}
+        }
+    }
+    if company_id:
+        payload["values"]["company"] = {"record_id": company_id}
+
+    try:
+        r = requests.post(f"{ATTIO_BASE_URL}/objects/emails/records", headers=HEADERS, json=payload)
+        r.raise_for_status()
+        logging.info("Created email record for %s", email_data["from_email"])
+    except requests.HTTPError as e:
+        logging.warning("Cannot create email record for %s: %s", email_data["from_email"], e.response.text)
+
+# ------------------ GMAIL HELPERS ------------------
+
 def get_gmail_service():
-    creds = service_account.Credentials.from_service_account_file(
-        SERVICE_ACCOUNT_FILE,
-        scopes=SCOPES,
-        subject=GROUP_EMAIL  # impersonate the group mailbox
-    )
+    """
+    Uses a credentials JSON to authenticate Gmail API.
+    Make sure you have 'token.json' with the Gmail OAuth2 credentials.
+    """
+    creds = Credentials.from_authorized_user_file("token.json", ["https://www.googleapis.com/auth/gmail.readonly"])
     service = build("gmail", "v1", credentials=creds)
     return service
 
-def fetch_messages(service, max_results=50):
-    """Fetch only messages sent from the Google Group."""
-    try:
-        query = f"from:{GROUP_EMAIL}"
-        res = service.users().messages().list(userId="me", maxResults=max_results, q=query).execute()
-        return res.get("messages", [])
-    except Exception as e:
-        logging.error("Failed to fetch messages: %s", e)
-        return []
+def fetch_group_messages(service, max_results=50):
+    """
+    Fetches messages from Gmail API sent to the GROUP_EMAIL.
+    Returns list of dicts: from_email, from_name, subject, body, message_id, to
+    """
+    query = f"to:{GROUP_EMAIL}"
+    results = service.users().messages().list(userId=GMAIL_USER, q=query, maxResults=max_results).execute()
+    messages = results.get("messages", [])
+    emails = []
 
-def parse_message(service, msg_id):
-    msg = service.users().messages().get(userId="me", id=msg_id, format="full").execute()
-    headers = {h["name"]: h["value"] for h in msg["payload"]["headers"]}
-    sender_name, sender_email = parseaddr(headers.get("From", ""))
-    subject = headers.get("Subject", "")
-    message_id = headers.get("Message-ID")
+    for msg in messages:
+        msg_detail = service.users().messages().get(userId=GMAIL_USER, id=msg["id"], format="full").execute()
+        headers = {h["name"]: h["value"] for h in msg_detail["payload"]["headers"]}
+        from_email = headers.get("From", "").split("<")[-1].strip(">")
+        from_name = headers.get("From", "").split("<")[0].strip().strip('"')
+        subject = headers.get("Subject", "")
+        to_list = headers.get("To", "").split(",")
 
-    body = ""
-    payload = msg.get("payload", {})
-    if "parts" in payload:
-        for part in payload["parts"]:
-            if part.get("mimeType") == "text/plain" and "data" in part.get("body", {}):
-                body = base64.urlsafe_b64decode(part["body"]["data"]).decode("utf-8", errors="ignore")
-                break
-    elif "body" in payload and "data" in payload["body"]:
-        body = base64.urlsafe_b64decode(payload["body"]["data"]).decode("utf-8", errors="ignore")
-
-    return {
-        "from_email": sender_email,
-        "from_name": sender_name,
-        "subject": subject,
-        "body": body,
-        "message_id": message_id,
-    }
-
-# =======================
-# ATTIO HELPERS
-# =======================
-def create_person(name, email):
-    payload = {"values": {"name": name, "email_addresses": [{"email_address": email}]}}
-    try:
-        r = requests.post(f"{ATTIO_BASE}/objects/people/records", headers=ATTIO_HEADERS, json=payload)
-        r.raise_for_status()
-        resp = r.json()
-        record = resp.get("data")  # Attio returns the record in "data"
-        if record:
-            logging.info("Created person | email=%s | record_id=%s", email, record.get("record_id"))
-            return record
+        # Extract body (supports plain text)
+        body = ""
+        if "parts" in msg_detail["payload"]:
+            for part in msg_detail["payload"]["parts"]:
+                if part.get("mimeType") == "text/plain":
+                    body = base64.urlsafe_b64decode(part["body"]["data"]).decode("utf-8")
+                    break
         else:
-            logging.warning("No record returned for email %s | response: %s", email, resp)
-            return None
-    except requests.HTTPError as e:
-        logging.warning("Cannot create person %s: %s", email, e)
-        return None
+            body = base64.urlsafe_b64decode(msg_detail["payload"]["body"]["data"]).decode("utf-8")
 
-def create_email_record(person_id, email):
-    payload = {
-        "values": {
-            "subject": email["subject"],
-            "body": email["body"],
-            "from": email["from_email"],
-            "external_message_id": email["message_id"],
-            "person": [{"target_object": "people", "target_record_id": person_id}]
-        }
-    }
-    r = requests.post(f"{ATTIO_BASE}/objects/emails/records", headers=ATTIO_HEADERS, json=payload)
-    try:
-        r.raise_for_status()
-        logging.info("Synced email from %s", email["from_email"])
-        return r.json()
-    except requests.HTTPError as e:
-        logging.warning("Cannot create email record for %s: %s", email["from_email"], e.response.text)
-        return None
+        emails.append({
+            "from_email": from_email,
+            "from_name": from_name,
+            "subject": subject,
+            "body": body,
+            "message_id": headers.get("Message-ID"),
+            "to": to_list
+        })
+    return emails
 
-# =======================
-# MAIN SYNC
-# =======================
+# ------------------ SYNC LOOP ------------------
+
 def sync_group_to_attio(max_results=50):
     service = get_gmail_service()
-    messages = fetch_messages(service, max_results)
-    logging.info("Found %d messages", len(messages))
+    emails = fetch_group_messages(service, max_results=max_results)
+    logging.info("Found %d messages", len(emails))
 
-    for m in messages:
-        email = parse_message(service, m["id"])
-        logging.info("Processing message ID: %s", email["message_id"])
+    for email in emails:
+        logging.info("Processing message ID: %s", email.get("message_id"))
 
-        # Filter only emails from the Google Group
-        if GROUP_EMAIL not in email["from_email"]:
-            logging.info("Skipping email not from group: %s", email["from_email"])
+        # Assert person
+        person = assert_person(email["from_name"], email["from_email"])
+        if not person:
+            logging.warning("Skipping email — person unavailable: %s", email["from_email"])
             continue
+        person_id = person.get("record_id")
 
-        if not email["message_id"]:
-            logging.warning("Skipping message with no Message-ID: %s", email)
-            continue
+        # Assert company from email domain
+        domain = email["from_email"].split("@")[-1]
+        company_id = assert_company(domain)
 
-        # Attempt to create person
-        person = create_person(email["from_name"], email["from_email"])
-        if person:
-            person_id = person["record_id"]
-        else:
-            logging.info("Skipping person creation — assuming already exists or cannot create: %s", email["from_email"])
-            # In a production version, you could fetch the existing person's record_id here if needed
-            continue
+        # Create email record linked to person (and company)
+        create_email_record(email, person_id, company_id)
 
-        create_email_record(person_id, email)
+# ------------------ MAIN ------------------
 
-# =======================
-# ENTRYPOINT
-# =======================
 if __name__ == "__main__":
     sync_group_to_attio(max_results=100)
