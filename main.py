@@ -35,10 +35,16 @@ def get_gmail_service():
     return service
 
 def fetch_messages(service, max_results=50):
-    """Fetch messages from the mailbox."""
+    """
+    Fetch messages sent to the Google Group only.
+    Uses Gmail search query 'to:<group_email>'.
+    """
     try:
-        res = service.users().messages().list(userId="me", maxResults=max_results).execute()
-        return res.get("messages", [])
+        query = f"to:{GROUP_EMAIL}"
+        res = service.users().messages().list(userId="me", maxResults=max_results, q=query).execute()
+        messages = res.get("messages", [])
+        logging.info("Fetched %d messages sent to %s", len(messages), GROUP_EMAIL)
+        return messages
     except Exception as e:
         logging.error("Failed to fetch messages: %s", e)
         return []
