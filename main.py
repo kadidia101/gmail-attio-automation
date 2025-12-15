@@ -102,24 +102,44 @@ def find_person_by_email(email):
         headers=ATTIO_HEADERS,
         json={
             "filter": {
-                "email_addresses": {
-                    "any": {"email_address": {"equals": email}}
+                "email_addresses.email_address": {
+                    "equals": email
                 }
-            }
+            },
+            "limit": 1
         },
     )
+    r.raise_for_status()
     records = r.json().get("records", [])
     return records[0] if records else None
 
 def create_person(email, name):
-    payload = {"values": {"name": name or email, "email_addresses": [{"email_address": email}]}}
+    payload = {
+        "values": {
+            "name": name or email,
+            "email_addresses": [{"email_address": email}]
+        }
+    }
+
     try:
-        r = requests.post(f"{ATTIO_BASE}/objects/people/records", headers=ATTIO_HEADERS, json=payload)
+        r = requests.post(
+            f"{ATTIO_BASE}/objects/people/records",
+            headers=ATTIO_HEADERS,
+            json=payload
+        )
         r.raise_for_status()
         return r.json()
+
     except requests.HTTPError as e:
-        logging.warning("Cannot create person %s: %s", email, e)
+        logging.warning(
+            "Cannot create person %s | status=%s | response=%s | payload=%s",
+            email,
+            e.response.status_code,
+            e.response.text,
+            payload
+        )
         return None
+
 
 def find_company_by_domain(domain):
     r = requests.post(
@@ -178,11 +198,20 @@ def sync_group_to_attio(max_results=50):
             continue
         
         person = find_person_by_email(email["from_email"])
+
         if not person:
+            logging.info("Person not found, attempting create: %s", email["from_email"])
             person = create_person(email["from_email"], email["from_name"])
+        
             if not person:
-                logging.warning("Skipping email, cannot create person: %s", email["from_email"])
+                logging.warning(
+                    "Skipping email — person unavailable: %s",
+                    email["from_email"]
+                )
                 continue
+        else:
+            logging.info("Found existing person: %s", email["from_email"])
+
         
         domain = email["from_email"].split("@")[-1]
         company = find_company_by_domain(domain)
