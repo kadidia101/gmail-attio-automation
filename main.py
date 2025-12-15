@@ -10,7 +10,7 @@ import requests
 # CONFIG
 # =======================
 SERVICE_ACCOUNT_FILE = "/home/ec2-user/.secrets/service_account.json"
-GROUP_EMAIL = "automation@mithrildefense.com"  # Google Group email
+GROUP_EMAIL = "kadidia.sylla@mithrildefense.com"  # Google Group email
 ATTIO_TOKEN = os.environ["ATTIO_TOKEN"]
 ATTIO_BASE = "https://api.attio.com/v2"
 ATTIO_HEADERS = {
@@ -19,7 +19,6 @@ ATTIO_HEADERS = {
 }
 
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
-IMPERSONATE_USER = "kadidia.sylla@mithrildefense.com"  # Inbox that receives all group emails
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
@@ -30,51 +29,39 @@ def get_gmail_service():
     creds = service_account.Credentials.from_service_account_file(
         SERVICE_ACCOUNT_FILE,
         scopes=SCOPES,
-        subject=IMPERSONATE_USER  # impersonate real user
+        subject=GROUP_EMAIL  # impersonate the group mailbox
     )
     service = build("gmail", "v1", credentials=creds)
     return service
 
 def fetch_messages(service, max_results=50):
-    """Fetch messages from the mailbox, only sent to GROUP_EMAIL."""
+    """Fetch messages from the mailbox."""
     try:
-        query = f"to:{GROUP_EMAIL}"
-        res = service.users().messages().list(userId="me", maxResults=max_results, q=query).execute()
+        res = service.users().messages().list(userId="me", maxResults=max_results).execute()
         return res.get("messages", [])
     except Exception as e:
         logging.error("Failed to fetch messages: %s", e)
         return []
 
 def parse_message(service, msg_id):
-    """Parse Gmail message and extract essential info."""
+    """Parse Gmail message."""
     msg = service.users().messages().get(userId="me", id=msg_id, format="full").execute()
+    headers = {h["name"]: h["value"] for h in msg["payload"]["headers"]}
+    sender_name, sender_email = parseaddr(headers.get("From", ""))
+    subject = headers.get("Subject", "")
+    message_id = headers.get("Message-ID")
     
-    # Extract headers
-    headers = {h["name"].lower(): h["value"] for h in msg.get("payload", {}).get("headers", [])}
-    sender_name, sender_email = parseaddr(headers.get("from", ""))
-    subject = headers.get("subject", "")
+    body = ""
+    payload = msg.get("payload", {})
+    if "parts" in payload:
+        for part in payload["parts"]:
+            if part.get("mimeType") == "text/plain" and "data" in part.get("body", {}):
+                body = base64.urlsafe_b64decode(part["body"]["data"]).decode("utf-8", errors="ignore")
+                break
+    elif "body" in payload and "data" in payload["body"]:
+        body = base64.urlsafe_b64decode(payload["body"]["data"]).decode("utf-8", errors="ignore")
     
-    # Gmail header for Message-ID can vary in case
-    message_id = headers.get("message-id") or headers.get("Message-ID")
-    
-    # Extract body
-    def get_body(payload):
-        if "parts" in payload:
-            for part in payload["parts"]:
-                # Handle nested multipart
-                if part.get("mimeType") == "multipart/alternative":
-                    body = get_body(part)
-                    if body:
-                        return body
-                elif part.get("mimeType") in ("text/plain", "text/html") and "data" in part.get("body", {}):
-                    data = part["body"]["data"]
-                    return base64.urlsafe_b64decode(data).decode("utf-8", errors="ignore")
-        elif "body" in payload and "data" in payload["body"]:
-            return base64.urlsafe_b64decode(payload["body"]["data"]).decode("utf-8", errors="ignore")
-        return ""
-    
-    body = get_body(msg.get("payload", {}))
-    
+    logging.info("Parsed message: %s, Message-ID: %s", subject, message_id)
     return {
         "from_email": sender_email,
         "from_name": sender_name,
@@ -86,16 +73,6 @@ def parse_message(service, msg_id):
 # =======================
 # ATTIO HELPERS
 # =======================
-def email_already_ingested(message_id):
-    if not message_id:
-        return False
-    r = requests.post(
-        f"{ATTIO_BASE}/objects/emails/records/query",
-        headers=ATTIO_HEADERS,
-        json={"filter": {"external_message_id": {"equals": message_id}}},
-    )
-    return len(r.json().get("records", [])) > 0
-
 def find_person_by_email(email):
     r = requests.post(
         f"{ATTIO_BASE}/objects/people/records/query",
@@ -112,7 +89,13 @@ def find_person_by_email(email):
     return records[0] if records else None
 
 def create_person(email, name):
-    payload = {"values": {"name": name or email, "email_addresses": [{"email_address": email}]}}
+    """Create a person if allowed; returns None if not possible."""
+    payload = {
+        "values": {
+            "name": name or email,
+            "email_addresses": [{"email_address": email}]
+        }
+    }
     try:
         r = requests.post(f"{ATTIO_BASE}/objects/people/records", headers=ATTIO_HEADERS, json=payload)
         r.raise_for_status()
@@ -140,6 +123,16 @@ def create_company(domain):
         logging.warning("Cannot create company for domain %s: %s", domain, e)
         return None
 
+def email_already_ingested(message_id):
+    if not message_id:
+        return False
+    r = requests.post(
+        f"{ATTIO_BASE}/objects/emails/records/query",
+        headers=ATTIO_HEADERS,
+        json={"filter": {"external_message_id": {"equals": message_id}}},
+    )
+    return len(r.json().get("records", [])) > 0
+
 def create_email_record(person_id, email, company_id=None):
     payload = {
         "values": {
@@ -147,11 +140,12 @@ def create_email_record(person_id, email, company_id=None):
             "body": email["body"],
             "from": email["from_email"],
             "external_message_id": email["message_id"],
-            "person": [{"target_object": "people", "target_record_id": person_id}],
+            "person": [{"target_object": "people", "target_record_id": person_id}]
         }
     }
     if company_id:
         payload["values"]["company"] = [{"target_object": "companies", "target_record_id": company_id}]
+    
     try:
         r = requests.post(f"{ATTIO_BASE}/objects/emails/records", headers=ATTIO_HEADERS, json=payload)
         r.raise_for_status()
@@ -177,6 +171,7 @@ def sync_group_to_attio(max_results=50):
             logging.info("Skipping duplicate message: %s", email["message_id"])
             continue
         
+        # Check if person exists
         person = find_person_by_email(email["from_email"])
         if not person:
             person = create_person(email["from_email"], email["from_name"])
@@ -184,6 +179,7 @@ def sync_group_to_attio(max_results=50):
                 logging.warning("Skipping email, cannot create person: %s", email["from_email"])
                 continue
         
+        # Handle company based on email domain
         domain = email["from_email"].split("@")[-1]
         company = find_company_by_domain(domain)
         if not company:
@@ -191,8 +187,9 @@ def sync_group_to_attio(max_results=50):
             if not company:
                 logging.warning("Workspace settings prevent creating company for domain: %s", domain)
         
+        # Create email record in Attio
         create_email_record(person["id"], email, company_id=company["id"] if company else None)
-        logging.info("Synced email from %s", email["from_email"])
+        logging.info("Synced email from %s, Message-ID: %s", email["from_email"], email["message_id"])
 
 # =======================
 # ENTRYPOINT
