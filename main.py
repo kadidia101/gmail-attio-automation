@@ -98,42 +98,40 @@ def email_already_ingested(message_id):
 
 def find_person_by_email(email):
     payload = {
-        "query": email,
+        "filter": {
+            "email_addresses": {
+                "contains": email
+            }
+        },
         "limit": 1
     }
 
     r = requests.post(
-        f"{ATTIO_BASE}/objects/people/records/search",
+        f"{ATTIO_BASE}/objects/people/records/query",
         headers=ATTIO_HEADERS,
         json=payload,
     )
 
     if r.status_code != 200:
         logging.error(
-            "Attio person search failed | status=%s | response=%s",
+            "Attio person query failed | status=%s | response=%s | payload=%s",
             r.status_code,
             r.text,
+            payload,
         )
         return None
 
-    results = r.json().get("data", [])
-    if not results:
-        return None
-
-    person = results[0]
-    logging.info(
-        "Matched person | email=%s | person_id=%s",
-        email,
-        person["id"],
-    )
-    return person
+    records = r.json().get("records", [])
+    return records[0] if records else None
 
 def create_person(email, name):
     payload = {
         "data": {
             "values": {
                 "name": name or email,
-                "email_addresses": [{"email_address": email}],
+                "email_addresses": [
+                    {"email_address": email}
+                ]
             }
         }
     }
@@ -144,21 +142,21 @@ def create_person(email, name):
         json=payload,
     )
 
+    # Success
     if r.status_code in (200, 201):
-        person = r.json()["data"]
-        logging.info("Created person | email=%s | person_id=%s", email, person["id"])
-        return person
+        return r.json()
 
-    # uniqueness conflict = someone else already created it
+    # Uniqueness conflict → person already exists → refetch
     if r.status_code == 400 and "uniqueness" in r.text.lower():
-        logging.warning("Uniqueness conflict — retrying lookup for %s", email)
+        logging.warning("Uniqueness conflict, refetching person: %s", email)
         return find_person_by_email(email)
 
     logging.warning(
-        "Cannot create person %s | status=%s | response=%s",
+        "Cannot create person %s | status=%s | response=%s | payload=%s",
         email,
         r.status_code,
         r.text,
+        payload,
     )
     return None
 
@@ -181,25 +179,41 @@ def create_company(domain):
         logging.warning("Cannot create company for domain %s: %s", domain, e)
         return None
 
-def create_email_record(person_id, email, company_id=None):
+def create_email_record(person_id, email):
     payload = {
-        "values": {
-            "subject": email["subject"],
-            "body": email["body"],
-            "from": email["from_email"],
-            "external_message_id": email["message_id"],
-            "person": [{"target_object": "people", "target_record_id": person_id}],
+        "data": {
+            "values": {
+                "subject": email["subject"],
+                "body": email["body"],
+                "external_message_id": email["message_id"],
+                "participants": [
+                    {
+                        "role": "from",
+                        "person": {
+                            "target_object": "people",
+                            "target_record_id": person_id
+                        }
+                    }
+                ]
+            }
         }
     }
-    if company_id:
-        payload["values"]["company"] = [{"target_object": "companies", "target_record_id": company_id}]
-    try:
-        r = requests.post(f"{ATTIO_BASE}/objects/emails/records", headers=ATTIO_HEADERS, json=payload)
-        r.raise_for_status()
-        return r.json()
-    except requests.HTTPError as e:
-        logging.warning("Cannot create email record for %s: %s", email["from_email"], e)
+
+    r = requests.post(
+        f"{ATTIO_BASE}/objects/emails/records",
+        headers=ATTIO_HEADERS,
+        json=payload,
+    )
+
+    if r.status_code not in (200, 201):
+        logging.warning(
+            "Cannot create email record | status=%s | response=%s",
+            r.status_code,
+            r.text,
+        )
         return None
+
+    return r.json()
 
 # =======================
 # MAIN SYNC
@@ -219,17 +233,13 @@ def sync_group_to_attio(max_results=50):
             continue
         
         person = find_person_by_email(email["from_email"])
-
         if not person:
-            logging.info("Person not found, attempting create: %s", email["from_email"])
+            logging.info("Person not found, creating: %s", email["from_email"])
             person = create_person(email["from_email"], email["from_name"])
-        
             if not person:
-                logging.warning(
-                    "Skipping email — person unavailable: %s",
-                    email["from_email"]
-                )
+                logging.warning("Skipping email — person unavailable: %s", email["from_email"])
                 continue
+
         else:
             logging.info("Found existing person: %s", email["from_email"])
 
