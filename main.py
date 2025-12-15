@@ -97,30 +97,22 @@ def email_already_ingested(message_id):
     return len(r.json().get("records", [])) > 0
 
 def find_person_by_email(email):
-    payload = {
-        "filter": {
-            "email_addresses": {
-                "contains": email
-            }
-        },
-        "limit": 1
-    }
-
     r = requests.post(
         f"{ATTIO_BASE}/objects/people/records/query",
         headers=ATTIO_HEADERS,
-        json=payload,
+        json={
+            "filter": {
+                "primary_email_address": {"equals": email}  # correct slug
+            },
+            "limit": 1
+        },
     )
-
-    if r.status_code != 200:
-        logging.error(
-            "Attio person query failed | status=%s | response=%s | payload=%s",
-            r.status_code,
-            r.text,
-            payload,
-        )
+    try:
+        r.raise_for_status()
+    except requests.HTTPError:
+        logging.error("Attio person query failed | status=%s | response=%s | payload=%s",
+                      r.status_code, r.text, {"filter": {"primary_email_address": {"equals": email}}, "limit": 1})
         return None
-
     records = r.json().get("records", [])
     return records[0] if records else None
 
