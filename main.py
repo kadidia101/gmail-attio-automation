@@ -9,7 +9,7 @@ from googleapiclient.discovery import build
 # CONFIG
 # =======================
 SERVICE_ACCOUNT_FILE = "/home/ec2-user/.secrets/service_account.json"
-GROUP_EMAIL = "automation@mithrildefense.com"  # Google Group mailbox
+GROUP_EMAIL = "kadidia.sylla@mithrildefense.com"  # Google Group mailbox
 ATTIO_INBOUND_EMAIL = "mithrildefense@attio.email"  # Your Attio inbound email
 
 ATTIO_API_KEY = os.environ.get("ATTIO_TOKEN")  # optional if needed for API
