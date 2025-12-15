@@ -20,7 +20,7 @@ def get_gmail_service():
     creds = service_account.Credentials.from_service_account_file(
         SERVICE_ACCOUNT_FILE,
         scopes=SCOPES,
-        subject=GROUP_EMAIL  # impersonate the group mailbox
+        subject="kadidia.sylla@mithrildefense.com"  # impersonate the group mailbox
     )
     return build("gmail", "v1", credentials=creds)
 
