@@ -114,7 +114,7 @@ def get_or_create_person(email, name):
     # Step 1: Try to fetch existing person
     try:
         r = requests.post(
-            f"{ATTIO_BASE}/objects/people/records/query",
+            f"{ATTIO_BASE}/objects/people/records/search",
             headers=ATTIO_HEADERS,
             json={"filter": {"primary_email_address": {"equals": email}}, "limit": 1},
         )
