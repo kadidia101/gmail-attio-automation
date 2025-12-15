@@ -34,8 +34,10 @@ def get_gmail_service():
     return service
 
 def fetch_messages(service, max_results=50):
+    """Fetch only messages sent from the Google Group."""
     try:
-        res = service.users().messages().list(userId="me", maxResults=max_results).execute()
+        query = f"from:{GROUP_EMAIL}"
+        res = service.users().messages().list(userId="me", maxResults=max_results, q=query).execute()
         return res.get("messages", [])
     except Exception as e:
         logging.error("Failed to fetch messages: %s", e)
@@ -71,9 +73,11 @@ def parse_message(service, msg_id):
 # =======================
 def create_person(name, email):
     payload = {
-        "values": {
-            "name": name or email,
-            "primary_email_address": email
+        "data": {
+            "values": {
+                "name": name or email,
+                "primary_email_address": email
+            }
         }
     }
     r = requests.post(f"{ATTIO_BASE}/objects/people/records", headers=ATTIO_HEADERS, json=payload)
