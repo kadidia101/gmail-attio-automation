@@ -99,12 +99,8 @@ def email_already_ingested(message_id):
 def find_person_by_email(email):
     payload = {
         "filter": {
-            "email_addresses": {
-                "any": {
-                    "email_address": {
-                        "equals": email
-                    }
-                }
+            "email_addresses.email_address": {
+                "equals": email
             }
         },
         "limit": 1
@@ -113,7 +109,7 @@ def find_person_by_email(email):
     r = requests.post(
         f"{ATTIO_BASE}/objects/people/records/query",
         headers=ATTIO_HEADERS,
-        json=payload
+        json=payload,
     )
 
     if r.status_code != 200:
@@ -121,7 +117,7 @@ def find_person_by_email(email):
             "Attio person query failed | status=%s | response=%s | payload=%s",
             r.status_code,
             r.text,
-            payload
+            payload,
         )
         return None
 
@@ -130,31 +126,33 @@ def find_person_by_email(email):
 
 def create_person(email, name):
     payload = {
-        "values": {
-            "name": name or email,
-            "email_addresses": [{"email_address": email}]
+        "data": {
+            "values": {
+                "name": name or email,
+                "email_addresses": [
+                    {"email_address": email}
+                ]
+            }
         }
     }
 
-    try:
-        r = requests.post(
-            f"{ATTIO_BASE}/objects/people/records",
-            headers=ATTIO_HEADERS,
-            json=payload
-        )
-        r.raise_for_status()
-        return r.json()
+    r = requests.post(
+        f"{ATTIO_BASE}/objects/people/records",
+        headers=ATTIO_HEADERS,
+        json=payload,
+    )
 
-    except requests.HTTPError as e:
+    if r.status_code != 200:
         logging.warning(
             "Cannot create person %s | status=%s | response=%s | payload=%s",
             email,
-            e.response.status_code,
-            e.response.text,
-            payload
+            r.status_code,
+            r.text,
+            payload,
         )
         return None
 
+    return r.json()["data"]
 
 def find_company_by_domain(domain):
     r = requests.post(
