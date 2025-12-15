@@ -44,9 +44,16 @@ def fetch_messages(service, max_results=50, label_ids=None):
         labelIds=label_ids
     )
 
+    if request is None:
+        print("No messages request could be created.")
+        return []
+
     while request:
         response = request.execute()
-        messages.extend(response.get("messages", []))
+        msgs = response.get("messages", [])
+        if not msgs:
+            break
+        messages.extend(msgs)
         request = service.users().messages().list_next(request, response)
 
     return messages
@@ -103,18 +110,28 @@ def find_person_by_email(email):
     return records[0] if records else None
 
 def create_person(email, name):
-    r = requests.post(
-        f"{ATTIO_BASE}/objects/people/records",
-        headers=ATTIO_HEADERS,
-        json={
-            "values": {
-                "name": name or email,
-                "email_addresses": [{"email_address": email}],
-            }
-        },
-    )
-    r.raise_for_status()
-    return r.json()
+    if not email or "@" not in email:
+        print(f"Skipping invalid email: {email}")
+        return None
+    
+    payload = {
+        "values": {
+            "name": name or email,
+            "email_addresses": [{"email_address": email}],
+        }
+    }
+    
+    try:
+        r = requests.post(
+            f"{ATTIO_BASE}/objects/people/records",
+            headers=ATTIO_HEADERS,
+            json=payload
+        )
+        r.raise_for_status()
+        return r.json()
+    except requests.exceptions.HTTPError as e:
+        print(f"Failed to create person for {email}: {e}, payload: {payload}")
+        return None
 
 def email_already_ingested(message_id):
     if not message_id:
@@ -147,32 +164,6 @@ def create_email_record(person_id, email):
     return r.json()
 
 # =======================
-# FETCH MESSAGES
-# =======================
-def fetch_messages(service, max_results=50, label_ids=None):
-    """Fetches recent messages from Gmail with optional label filtering."""
-    messages = []
-    request = service.users().messages().list(
-        userId=GMAIL_USER,
-        maxResults=max_results,
-        labelIds=label_ids
-    )
-
-    if request is None:
-        print("No messages request could be created.")
-        return []
-
-    while request:
-        response = request.execute()
-        msgs = response.get("messages", [])
-        if not msgs:
-            break
-        messages.extend(msgs)
-        request = service.users().messages().list_next(request, response)
-
-    return messages
-
-# =======================
 # MAIN SYNC
 # =======================
 def sync_personal_gmail_to_attio():
@@ -187,17 +178,21 @@ def sync_personal_gmail_to_attio():
 
     for m in messages:
         email = parse_message(service, m["id"])
+        
+        # Skip if already ingested or no message_id
         if not email["message_id"] or email_already_ingested(email["message_id"]):
+            print(f"Skipping duplicate or invalid message: {email['message_id']}")
             continue
+        
         person = find_person_by_email(email["from_email"])
         if not person:
             person = create_person(email["from_email"], email["from_name"])
             if person is None:
-                print("Skipping message from invalid sender:", email["from_email"])
+                print(f"Skipping message from invalid sender: {email['from_email']}")
                 continue
+        
         create_email_record(person["id"], email)
         print("Synced:", email["from_email"])
-
 
 # =======================
 # ENTRYPOINT
