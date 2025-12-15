@@ -97,60 +97,32 @@ def email_already_ingested(message_id):
     return len(r.json().get("records", [])) > 0
 
 def find_person_by_email(email):
-    r = requests.post(
-        f"{ATTIO_BASE}/objects/people/records/query",
-        headers=ATTIO_HEADERS,
-        json={
-            "filter": {
-                "primary_email_address": {"equals": email}  # correct slug
-            },
-            "limit": 1
-        },
-    )
     try:
+        r = requests.post(
+            f"{ATTIO_BASE}/objects/people/records/query",
+            headers=ATTIO_HEADERS,
+            json={"filter": {"primary_email_address": {"equals": email}}, "limit": 1},
+        )
         r.raise_for_status()
-    except requests.HTTPError:
-        logging.error("Attio person query failed | status=%s | response=%s | payload=%s",
-                      r.status_code, r.text, {"filter": {"primary_email_address": {"equals": email}}, "limit": 1})
+        records = r.json().get("records", [])
+        return records[0] if records else None
+    except requests.HTTPError as e:
+        logging.error("Attio person query failed | email=%s | %s", email, e)
         return None
-    records = r.json().get("records", [])
-    return records[0] if records else None
 
 def create_person(email, name):
-    payload = {
-        "data": {
-            "values": {
-                "name": name or email,
-                "email_addresses": [
-                    {"email_address": email}
-                ]
-            }
-        }
-    }
-
-    r = requests.post(
-        f"{ATTIO_BASE}/objects/people/records",
-        headers=ATTIO_HEADERS,
-        json=payload,
-    )
-
-    # Success
-    if r.status_code in (200, 201):
+    payload = {"values": {"name": name or email, "primary_email_address": email}}
+    try:
+        r = requests.post(f"{ATTIO_BASE}/objects/people/records", headers=ATTIO_HEADERS, json=payload)
+        r.raise_for_status()
         return r.json()
-
-    # Uniqueness conflict → person already exists → refetch
-    if r.status_code == 400 and "uniqueness" in r.text.lower():
-        logging.warning("Uniqueness conflict, refetching person: %s", email)
-        return find_person_by_email(email)
-
-    logging.warning(
-        "Cannot create person %s | status=%s | response=%s | payload=%s",
-        email,
-        r.status_code,
-        r.text,
-        payload,
-    )
-    return None
+    except requests.HTTPError as e:
+        if "uniqueness_conflict" in str(e):
+            # fetch the existing person instead
+            logging.info("Uniqueness conflict, fetching existing person: %s", email)
+            return find_person_by_email(email)
+        logging.warning("Cannot create person %s: %s", email, e)
+        return None
 
 def find_company_by_domain(domain):
     r = requests.post(
