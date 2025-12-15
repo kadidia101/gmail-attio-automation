@@ -147,11 +147,42 @@ def create_email_record(person_id, email):
     return r.json()
 
 # =======================
+# FETCH MESSAGES
+# =======================
+def fetch_messages(service, max_results=50, label_ids=None):
+    """Fetches recent messages from Gmail with optional label filtering."""
+    messages = []
+    request = service.users().messages().list(
+        userId=GMAIL_USER,
+        maxResults=max_results,
+        labelIds=label_ids
+    )
+
+    if request is None:
+        print("No messages request could be created.")
+        return []
+
+    while request:
+        response = request.execute()
+        msgs = response.get("messages", [])
+        if not msgs:
+            break
+        messages.extend(msgs)
+        request = service.users().messages().list_next(request, response)
+
+    return messages
+
+# =======================
 # MAIN SYNC
 # =======================
 def sync_personal_gmail_to_attio():
     service = get_gmail_service()
     messages = fetch_messages(service)
+    
+    if not messages:
+        print("Mailbox is empty. No messages to sync.")
+        return
+
     print(f"Found {len(messages)} messages")
 
     for m in messages:
@@ -161,8 +192,12 @@ def sync_personal_gmail_to_attio():
         person = find_person_by_email(email["from_email"])
         if not person:
             person = create_person(email["from_email"], email["from_name"])
+            if person is None:
+                print("Skipping message from invalid sender:", email["from_email"])
+                continue
         create_email_record(person["id"], email)
         print("Synced:", email["from_email"])
+
 
 # =======================
 # ENTRYPOINT
