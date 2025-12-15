@@ -1,25 +1,23 @@
 import os
 import base64
-from google.oauth2 import service_account
+import requests
+from email.utils import parseaddr
 from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
-import email
-import time
+from google.oauth2 import service_account
 
 # =======================
 # CONFIG
 # =======================
-SERVICE_ACCOUNT_FILE = "/home/ec2-user/.secrets/service_account.json"
-GMAIL_USER = "central-mailbox@company.com"  # Workspace user that receives Google Group emails
-ATTIO_INBOUND_EMAIL = "workspace@attio.email"  # Attio inbound email
+SERVICE_ACCOUNT_FILE = "/home/ec2-user/.secrets/service_account.json"  # service account JSON
+WORKSPACE_USER_EMAIL = "kadidia.sylla@mithrildefense.com"  # impersonated user receiving Google Group emails
 
-SCOPES = [
-    "https://www.googleapis.com/auth/gmail.readonly",
-    "https://www.googleapis.com/auth/gmail.send",
-    "https://www.googleapis.com/auth/gmail.modify",
-]
+ATTIO_INBOUND_EMAIL = os.environ.get("ATTIO_INBOUND_EMAIL")  # e.g., yourworkspace@attio.email
+ATTIO_HEADERS = {
+    "Content-Type": "application/json",
+}
 
-FORWARDED_LABEL = "Forwarded_to_Attio"  # Gmail label to mark processed emails
+# Gmail API readonly scope
+SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 
 # =======================
 # GMAIL SERVICE
@@ -28,98 +26,100 @@ def get_gmail_service():
     creds = service_account.Credentials.from_service_account_file(
         SERVICE_ACCOUNT_FILE,
         scopes=SCOPES,
-        subject=GMAIL_USER  # impersonate the mailbox
+        subject=WORKSPACE_USER_EMAIL  # impersonate workspace user
     )
     return build("gmail", "v1", credentials=creds)
 
 # =======================
 # FETCH MESSAGES
 # =======================
-def fetch_unprocessed_messages(service, label_ids=None, max_results=50):
-    label_ids = label_ids or []
-    try:
-        response = service.users().messages().list(
-            userId="me",
-            labelIds=label_ids,
-            maxResults=max_results
-        ).execute()
-        return response.get("messages", [])
-    except HttpError as error:
-        print("An error occurred fetching messages:", error)
-        return []
+def fetch_messages(service, max_results=50):
+    """Fetch messages from the user's mailbox."""
+    response = service.users().messages().list(
+        userId="me",
+        maxResults=max_results
+    ).execute()
+    messages = response.get("messages", [])
+    return messages
 
 # =======================
-# GET FULL MESSAGE
+# PARSE EMAIL
 # =======================
-def get_message(service, msg_id):
-    return service.users().messages().get(
-        userId="me", id=msg_id, format="raw"
+def parse_message(service, msg_id):
+    """Return sender, subject, body, message_id."""
+    msg = service.users().messages().get(
+        userId="me",
+        id=msg_id,
+        format="full"
     ).execute()
+
+    headers = {h["name"]: h["value"] for h in msg["payload"]["headers"]}
+    sender_name, sender_email = parseaddr(headers.get("From", ""))
+    subject = headers.get("Subject", "")
+    message_id = headers.get("Message-ID", "")
+
+    body = ""
+    payload = msg["payload"]
+    if "parts" in payload:
+        for part in payload["parts"]:
+            if part.get("mimeType") == "text/plain" and "data" in part.get("body", {}):
+                body = base64.urlsafe_b64decode(part["body"]["data"]).decode("utf-8", errors="ignore")
+                break
+    elif "data" in payload.get("body", {}):
+        body = base64.urlsafe_b64decode(payload["body"]["data"]).decode("utf-8", errors="ignore")
+
+    return {
+        "from_email": sender_email,
+        "from_name": sender_name,
+        "subject": subject,
+        "body": body,
+        "message_id": message_id,
+    }
 
 # =======================
 # FORWARD TO ATTIO
 # =======================
-def forward_message(service, msg):
-    try:
-        raw_msg_bytes = base64.urlsafe_b64decode(msg['raw'])
-        # Create a new message object with the original content
-        original_msg = email.message_from_bytes(raw_msg_bytes)
-        
-        # Set new headers for forwarding
-        original_msg.replace_header('To', ATTIO_INBOUND_EMAIL)
-        
-        # Encode back to base64
-        raw_forward = base64.urlsafe_b64encode(original_msg.as_bytes()).decode()
-        
-        # Send
-        message = {'raw': raw_forward}
-        sent = service.users().messages().send(userId="me", body=message).execute()
-        return sent
-    except Exception as e:
-        print("Failed to forward:", e)
-        return None
+def forward_to_attio(email):
+    """Send the email content to Attio inbound email."""
+    payload = {
+        "from": email["from_email"],
+        "to": ATTIO_INBOUND_EMAIL,
+        "subject": email["subject"],
+        "body": email["body"],
+        "message_id": email["message_id"]
+    }
+
+    # Use SMTP, requests, or any library that allows sending raw email to Attio inbound
+    # Here we use requests with Mailgun-like forwarding simulation:
+    r = requests.post(f"https://api.mailgun.net/v3/fake-domain/messages", data=payload)  # placeholder
+    r.raise_for_status()
+    return r.json()
 
 # =======================
-# APPLY LABEL
+# MAIN SYNC
 # =======================
-def apply_label(service, msg_id, label_name):
-    try:
-        # Get or create label
-        labels = service.users().labels().list(userId="me").execute().get('labels', [])
-        label_id = None
-        for lbl in labels:
-            if lbl['name'] == label_name:
-                label_id = lbl['id']
-                break
-        if not label_id:
-            label = service.users().labels().create(
-                userId="me",
-                body={"name": label_name, "labelListVisibility": "labelShow", "messageListVisibility": "show"}
-            ).execute()
-            label_id = label['id']
-        # Apply label
-        service.users().messages().modify(
-            userId="me",
-            id=msg_id,
-            body={"addLabelIds": [label_id]}
-        ).execute()
-    except Exception as e:
-        print("Failed to apply label:", e)
-
-# =======================
-# MAIN SYNC LOOP
-# =======================
-def main():
+def sync_group_to_attio():
     service = get_gmail_service()
-    messages = fetch_unprocessed_messages(service)
-    print(f"Found {len(messages)} messages to process.")
+    messages = fetch_messages(service)
+    print(f"Found {len(messages)} messages")
 
-    for msg_ref in messages:
-        msg = get_message(service, msg_ref['id'])
-        sent = forward_message(service, msg)
-        if sent:
-            apply_label(service, msg_ref['id'], FORWARDED_LABEL)
-            print(f"Forwarded message {msg_ref['id']} to Attio.")
+    if not messages:
+        print("No messages to forward.")
+        return
 
+    for m in messages:
+        email = parse_message(service, m["id"])
+        if not email["message_id"]:
+            print(f"Skipping message with no Message-ID: {email}")
+            continue
+        try:
+            forward_to_attio(email)
+            print(f"Forwarded: {email['from_email']} - {email['subject']}")
+        except Exception as e:
+            print(f"Failed to forward {email['from_email']}: {e}")
+
+# =======================
+# ENTRYPOINT
+# =======================
 if __name__ == "__main__":
-    main()
+    sync_group_to_attio()
