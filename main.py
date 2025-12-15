@@ -72,24 +72,20 @@ def parse_message(service, msg_id):
 # ATTIO HELPERS
 # =======================
 def create_person(name, email):
-    payload = {
-        "data": {
-            "values": {
-                "name": name or email,
-                "email_addresses": [{"email_address": email}]
-            }
-        }
-    }
-    r = requests.post(f"{ATTIO_BASE}/objects/people/records", headers=ATTIO_HEADERS, json=payload)
+    payload = {"values": {"name": name, "email_addresses": [{"email_address": email}]}}
     try:
+        r = requests.post(f"{ATTIO_BASE}/objects/people/records", headers=ATTIO_HEADERS, json=payload)
         r.raise_for_status()
-        logging.info("Created person | email=%s | record_id=%s", email, r.json()["record_id"])
-        return r.json()
-    except requests.HTTPError as e:
-        if e.response.status_code == 400 and "uniqueness" in e.response.text.lower():
-            logging.info("Person already exists (uniqueness conflict): %s", email)
+        resp = r.json()
+        record = resp.get("data")  # Attio returns the record in "data"
+        if record:
+            logging.info("Created person | email=%s | record_id=%s", email, record.get("record_id"))
+            return record
+        else:
+            logging.warning("No record returned for email %s | response: %s", email, resp)
             return None
-        logging.warning("Cannot create person %s: %s", email, e.response.text)
+    except requests.HTTPError as e:
+        logging.warning("Cannot create person %s: %s", email, e)
         return None
 
 def create_email_record(person_id, email):
