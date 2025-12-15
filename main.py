@@ -10,7 +10,7 @@ import requests
 # CONFIG
 # =======================
 SERVICE_ACCOUNT_FILE = "/home/ec2-user/.secrets/service_account.json"
-GROUP_EMAIL = "kadidia.sylla@mithrildefense.com"  # Google Group email
+GROUP_EMAIL = "automation@mithrildefense.com"  # Google Group email
 ATTIO_TOKEN = os.environ["ATTIO_TOKEN"]
 ATTIO_BASE = "https://api.attio.com/v2"
 ATTIO_HEADERS = {
@@ -19,6 +19,7 @@ ATTIO_HEADERS = {
 }
 
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+IMPERSONATE_USER = "my.personal.user@mithrildefense.com"  # Inbox that receives all group emails
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
@@ -29,15 +30,16 @@ def get_gmail_service():
     creds = service_account.Credentials.from_service_account_file(
         SERVICE_ACCOUNT_FILE,
         scopes=SCOPES,
-        subject=GROUP_EMAIL  # impersonate the group mailbox
+        subject=IMPERSONATE_USER  # impersonate real user
     )
     service = build("gmail", "v1", credentials=creds)
     return service
 
 def fetch_messages(service, max_results=50):
-    """Fetch messages from the mailbox."""
+    """Fetch messages from the mailbox, only sent to GROUP_EMAIL."""
     try:
-        res = service.users().messages().list(userId="me", maxResults=max_results).execute()
+        query = f"to:{GROUP_EMAIL}"
+        res = service.users().messages().list(userId="me", maxResults=max_results, q=query).execute()
         return res.get("messages", [])
     except Exception as e:
         logging.error("Failed to fetch messages: %s", e)
@@ -72,6 +74,16 @@ def parse_message(service, msg_id):
 # =======================
 # ATTIO HELPERS
 # =======================
+def email_already_ingested(message_id):
+    if not message_id:
+        return False
+    r = requests.post(
+        f"{ATTIO_BASE}/objects/emails/records/query",
+        headers=ATTIO_HEADERS,
+        json={"filter": {"external_message_id": {"equals": message_id}}},
+    )
+    return len(r.json().get("records", [])) > 0
+
 def find_person_by_email(email):
     r = requests.post(
         f"{ATTIO_BASE}/objects/people/records/query",
@@ -88,18 +100,13 @@ def find_person_by_email(email):
     return records[0] if records else None
 
 def create_person(email, name):
-    payload = {
-        "values": {
-            "name": name or email,
-            "email_addresses": [{"email_address": email}]
-        }
-    }
+    payload = {"values": {"name": name or email, "email_addresses": [{"email_address": email}]}}
     try:
         r = requests.post(f"{ATTIO_BASE}/objects/people/records", headers=ATTIO_HEADERS, json=payload)
         r.raise_for_status()
         return r.json()
     except requests.HTTPError as e:
-        logging.warning("Cannot create person %s: %s, payload: %s", email, e, payload)
+        logging.warning("Cannot create person %s: %s", email, e)
         return None
 
 def find_company_by_domain(domain):
@@ -121,16 +128,6 @@ def create_company(domain):
         logging.warning("Cannot create company for domain %s: %s", domain, e)
         return None
 
-def email_already_ingested(message_id):
-    if not message_id:
-        return False
-    r = requests.post(
-        f"{ATTIO_BASE}/objects/emails/records/query",
-        headers=ATTIO_HEADERS,
-        json={"filter": {"external_message_id": {"equals": message_id}}},
-    )
-    return len(r.json().get("records", [])) > 0
-
 def create_email_record(person_id, email, company_id=None):
     payload = {
         "values": {
@@ -138,12 +135,11 @@ def create_email_record(person_id, email, company_id=None):
             "body": email["body"],
             "from": email["from_email"],
             "external_message_id": email["message_id"],
-            "person": [{"target_object": "people", "target_record_id": person_id}]
+            "person": [{"target_object": "people", "target_record_id": person_id}],
         }
     }
     if company_id:
         payload["values"]["company"] = [{"target_object": "companies", "target_record_id": company_id}]
-    
     try:
         r = requests.post(f"{ATTIO_BASE}/objects/emails/records", headers=ATTIO_HEADERS, json=payload)
         r.raise_for_status()
