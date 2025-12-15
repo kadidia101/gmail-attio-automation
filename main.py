@@ -241,14 +241,14 @@ def sync_group_to_attio(max_results=50):
         
         person_id = person.get("record_id")  # use record_id or whichever field identifies the person in Attio
 
-            except requests.HTTPError as e:
-                if e.response.status_code == 400 and "uniqueness" in e.response.text.lower():
-                    logging.info("Uniqueness conflict, refetching person")
-                    person = find_person_by_email(email["from_email"])
-                    person_id = person.get("id") if person else None
-                else:
-                    logging.warning("Skipping email — person unavailable: %s", email["from_email"])
-                    continue
+        except requests.HTTPError as e:
+            if e.response.status_code == 400 and "uniqueness" in e.response.text.lower():
+                logging.info("Uniqueness conflict, refetching person")
+                person = find_person_by_email(email["from_email"])
+                person_id = person.get("id") if person else None
+            else:
+                logging.warning("Skipping email — person unavailable: %s", email["from_email"])
+                continue
 
 
         person_id = person["id"]
