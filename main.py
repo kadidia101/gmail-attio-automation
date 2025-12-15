@@ -13,9 +13,7 @@ REAL_USER_EMAIL = "kadidia.sylla@mithrildefense.com"   # Workspace user with acc
 ATTIO_INBOUND = "mithrildefense@attio.email"      # Attio inbound address
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 
-# =======================
-# GMAIL SERVICE
-# =======================
+# ============= GMAIL SERVICE ============
 def get_gmail_service():
     creds = service_account.Credentials.from_service_account_file(
         SERVICE_ACCOUNT_FILE,
@@ -24,21 +22,18 @@ def get_gmail_service():
     )
     return build("gmail", "v1", credentials=creds)
 
-# =======================
-# FETCH MESSAGES
-# =======================
+# ============= FETCH MESSAGES ============
 def fetch_messages(service, max_results=50):
     results = service.users().messages().list(userId="me", maxResults=max_results).execute()
     return results.get("messages", [])
 
-# =======================
-# PARSE EMAIL BODY
-# =======================
+# ============= PARSE EMAIL ============
 def parse_message(service, msg_id):
     msg = service.users().messages().get(userId="me", id=msg_id, format="full").execute()
-    payload = msg["payload"]
+    headers = {h["name"]: h["value"] for h in msg["payload"].get("headers", [])}
     
     body = ""
+    payload = msg["payload"]
     if "parts" in payload:
         for part in payload["parts"]:
             if part["mimeType"] == "text/plain" and "data" in part["body"]:
@@ -48,39 +43,31 @@ def parse_message(service, msg_id):
         body = base64.urlsafe_b64decode(payload["body"]["data"]).decode("utf-8", errors="ignore")
     
     return {
-        "subject": next((h["value"] for h in payload["headers"] if h["name"] == "Subject"), ""),
-        "from_email": next((h["value"] for h in payload["headers"] if h["name"] == "From"), ""),
+        "subject": headers.get("Subject", "(no subject)"),
+        "from_email": headers.get("From", ""),
         "body": body
     }
 
-# =======================
-# FORWARD TO ATTIO
-# =======================
+# ============= POST TO ATTIO ============
 def forward_to_attio(email):
-    msg = MIMEText(email["body"])
-    msg["Subject"] = email["subject"]
-    msg["From"] = REAL_USER_EMAIL
-    msg["To"] = ATTIO_INBOUND
-
-    with smtplib.SMTP("localhost") as server:  # or use your SMTP server
-        server.sendmail(REAL_USER_EMAIL, ATTIO_INBOUND, msg.as_string())
+    payload = {
+        "to": ATTIO_INBOUND,
+        "subject": email["subject"],
+        "from": email["from_email"],
+        "body": email["body"]
+    }
+    r = requests.post(f"https://api.attio.com/v2/forward", json=payload)
+    r.raise_for_status()
     print("Forwarded to Attio:", email["subject"])
 
-# =======================
-# MAIN
-# =======================
+# ============= MAIN ============
 def main():
     service = get_gmail_service()
     messages = fetch_messages(service)
     print(f"Found {len(messages)} messages")
 
-    if not messages:
-        print("No messages to forward.")
-        return
-
     for m in messages:
         email = parse_message(service, m["id"])
-        # Optional: skip certain senders or duplicates
         forward_to_attio(email)
 
 if __name__ == "__main__":
