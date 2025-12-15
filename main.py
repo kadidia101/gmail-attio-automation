@@ -237,15 +237,21 @@ def sync_group_to_attio(max_results=50):
 
         # ---------- PERSON HANDLING ----------
         person = find_person_by_email(email["from_email"])
-        if not person:
-            person = create_person(email["from_email"], email["from_name"])
-            if not person:
-                # If creation failed due to uniqueness conflict, try refetch
-                logging.warning("Creation failed, refetching person: %s", email["from_email"])
-                person = find_person_by_email(email["from_email"])
-            if not person:
-                logging.warning("Skipping email — person unavailable: %s", email["from_email"])
-                continue
+        if person:
+            person_id = person.get("id")  # safely access the id
+        else:
+            try:
+                person = create_person(email["from_email"], email["from_name"])
+                person_id = person.get("id") if person else None
+            except requests.HTTPError as e:
+                if e.response.status_code == 400 and "uniqueness" in e.response.text.lower():
+                    logging.info("Uniqueness conflict, refetching person")
+                    person = find_person_by_email(email["from_email"])
+                    person_id = person.get("id") if person else None
+                else:
+                    logging.warning("Skipping email — person unavailable: %s", email["from_email"])
+                    continue
+
 
         person_id = person["id"]
 
