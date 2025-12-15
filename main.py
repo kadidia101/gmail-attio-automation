@@ -8,7 +8,7 @@ from googleapiclient.discovery import build
 # =======================
 # CONFIG
 # =======================
-SERVICE_ACCOUNT_FILE = "service_account.json"  # path to your service account JSON
+SERVICE_ACCOUNT_FILE = "/home/ec2-user/.secrets/service_account.json"  # path to your service account JSON
 GROUP_EMAIL = "inbox@company.com"              # the Google Group mailbox
 
 ATTIO_TOKEN = os.environ["ATTIO_TOKEN"]
