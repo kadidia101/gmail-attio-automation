@@ -232,26 +232,18 @@ def sync_group_to_attio(max_results=50):
         if email_already_ingested(email["message_id"]):
             logging.info("Skipping duplicate message: %s", email["message_id"])
             continue
-
-        # ---------- PERSON HANDLING ----------
+ 
+       # ---------- PERSON HANDLING ----------
         person = get_or_create_person(email["from_email"], email["from_name"])
         if not person:
             logging.warning("Skipping email — person unavailable: %s", email["from_email"])
             continue
         
-        person_id = person.get("record_id")  # use record_id or whichever field identifies the person in Attio
-
-        except requests.HTTPError as e:
-            if e.response.status_code == 400 and "uniqueness" in e.response.text.lower():
-                logging.info("Uniqueness conflict, refetching person")
-                person = find_person_by_email(email["from_email"])
-                person_id = person.get("id") if person else None
-            else:
-                logging.warning("Skipping email — person unavailable: %s", email["from_email"])
-                continue
-
-
-        person_id = person["id"]
+        # Extract the Attio record ID safely
+        person_id = person.get("record_id")  # usually record_id in Attio API
+        if not person_id:
+            logging.warning("Skipping email — person record_id missing: %s", email["from_email"])
+            continue
 
         # ---------- COMPANY HANDLING ----------
         domain = email["from_email"].split("@")[-1]
