@@ -46,22 +46,34 @@ def fetch_messages(service, max_results=50):
         return []
 
 def parse_message(service, msg_id):
-    """Parse Gmail message."""
+    """Parse Gmail message and extract essential info."""
     msg = service.users().messages().get(userId="me", id=msg_id, format="full").execute()
-    headers = {h["name"]: h["value"] for h in msg["payload"]["headers"]}
-    sender_name, sender_email = parseaddr(headers.get("From", ""))
-    subject = headers.get("Subject", "")
-    message_id = headers.get("Message-ID")
     
-    body = ""
-    payload = msg.get("payload", {})
-    if "parts" in payload:
-        for part in payload["parts"]:
-            if part.get("mimeType") == "text/plain" and "data" in part.get("body", {}):
-                body = base64.urlsafe_b64decode(part["body"]["data"]).decode("utf-8", errors="ignore")
-                break
-    elif "body" in payload and "data" in payload["body"]:
-        body = base64.urlsafe_b64decode(payload["body"]["data"]).decode("utf-8", errors="ignore")
+    # Extract headers
+    headers = {h["name"].lower(): h["value"] for h in msg.get("payload", {}).get("headers", [])}
+    sender_name, sender_email = parseaddr(headers.get("from", ""))
+    subject = headers.get("subject", "")
+    
+    # Gmail header for Message-ID can vary in case
+    message_id = headers.get("message-id") or headers.get("Message-ID")
+    
+    # Extract body
+    def get_body(payload):
+        if "parts" in payload:
+            for part in payload["parts"]:
+                # Handle nested multipart
+                if part.get("mimeType") == "multipart/alternative":
+                    body = get_body(part)
+                    if body:
+                        return body
+                elif part.get("mimeType") in ("text/plain", "text/html") and "data" in part.get("body", {}):
+                    data = part["body"]["data"]
+                    return base64.urlsafe_b64decode(data).decode("utf-8", errors="ignore")
+        elif "body" in payload and "data" in payload["body"]:
+            return base64.urlsafe_b64decode(payload["body"]["data"]).decode("utf-8", errors="ignore")
+        return ""
+    
+    body = get_body(msg.get("payload", {}))
     
     return {
         "from_email": sender_email,
