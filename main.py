@@ -222,36 +222,51 @@ def sync_group_to_attio(max_results=50):
     service = get_gmail_service()
     messages = fetch_messages(service, max_results)
     logging.info("Found %d messages", len(messages))
-    
+
     for m in messages:
         email = parse_message(service, m["id"])
+        # Filter only emails coming from the group (optional if inbox is dedicated)
+        if GROUP_EMAIL not in email["body"] and email["from_email"] != GROUP_EMAIL:
+            logging.info("Skipping email not from group: %s", email["from_email"])
+            continue
+
+        # Print message ID
+        logging.info("Processing message ID: %s", email.get("message_id"))
+
+        # Skip if no Message-ID
         if not email.get("message_id"):
             logging.warning("Skipping message with no Message-ID: %s", email)
             continue
+
+        # Skip duplicates
         if email_already_ingested(email["message_id"]):
             logging.info("Skipping duplicate message: %s", email["message_id"])
             continue
-        
+
+        # ---------- PERSON HANDLING ----------
         person = find_person_by_email(email["from_email"])
         if not person:
-            logging.info("Person not found, creating: %s", email["from_email"])
             person = create_person(email["from_email"], email["from_name"])
+            if not person:
+                # If creation failed due to uniqueness conflict, try refetch
+                logging.warning("Creation failed, refetching person: %s", email["from_email"])
+                person = find_person_by_email(email["from_email"])
             if not person:
                 logging.warning("Skipping email — person unavailable: %s", email["from_email"])
                 continue
 
-        else:
-            logging.info("Found existing person: %s", email["from_email"])
+        person_id = person["id"]
 
-        
+        # ---------- COMPANY HANDLING ----------
         domain = email["from_email"].split("@")[-1]
         company = find_company_by_domain(domain)
         if not company:
             company = create_company(domain)
             if not company:
                 logging.warning("Workspace settings prevent creating company for domain: %s", domain)
-        
-        create_email_record(person["id"], email, company_id=company["id"] if company else None)
+
+        # ---------- CREATE EMAIL RECORD ----------
+        create_email_record(person_id, email, company_id=company["id"] if company else None)
         logging.info("Synced email from %s", email["from_email"])
 
 # =======================
