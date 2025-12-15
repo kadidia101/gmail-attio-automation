@@ -19,7 +19,7 @@ ATTIO_HEADERS = {
 }
 
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
-IMPERSONATE_USER = "my.personal.user@mithrildefense.com"  # Inbox that receives all group emails
+IMPERSONATE_USER = "kadidia.sylla@mithrildefense.com"  # Inbox that receives all group emails
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
