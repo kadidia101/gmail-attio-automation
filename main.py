@@ -110,7 +110,22 @@ def find_person_by_email(email):
         logging.error("Attio person query failed | email=%s | %s", email, e)
         return None
 
-def create_person(email, name):
+def get_or_create_person(email, name):
+    # Step 1: Try to fetch existing person
+    try:
+        r = requests.post(
+            f"{ATTIO_BASE}/objects/people/records/query",
+            headers=ATTIO_HEADERS,
+            json={"filter": {"primary_email_address": {"equals": email}}, "limit": 1},
+        )
+        r.raise_for_status()
+        records = r.json().get("records", [])
+        if records:
+            return records[0]  # return existing person
+    except requests.HTTPError as e:
+        logging.error("Attio person query failed | email=%s | %s", email, e)
+
+    # Step 2: Attempt to create
     payload = {"values": {"name": name or email, "primary_email_address": email}}
     try:
         r = requests.post(f"{ATTIO_BASE}/objects/people/records", headers=ATTIO_HEADERS, json=payload)
@@ -118,9 +133,20 @@ def create_person(email, name):
         return r.json()
     except requests.HTTPError as e:
         if "uniqueness_conflict" in str(e):
-            # fetch the existing person instead
-            logging.info("Uniqueness conflict, fetching existing person: %s", email)
-            return find_person_by_email(email)
+            # If uniqueness conflict, refetch
+            logging.info("Uniqueness conflict, refetching existing person: %s", email)
+            try:
+                r = requests.post(
+                    f"{ATTIO_BASE}/objects/people/records/query",
+                    headers=ATTIO_HEADERS,
+                    json={"filter": {"primary_email_address": {"equals": email}}, "limit": 1},
+                )
+                r.raise_for_status()
+                records = r.json().get("records", [])
+                if records:
+                    return records[0]
+            except requests.HTTPError as e2:
+                logging.error("Attio refetch failed | email=%s | %s", email, e2)
         logging.warning("Cannot create person %s: %s", email, e)
         return None
 
@@ -208,13 +234,13 @@ def sync_group_to_attio(max_results=50):
             continue
 
         # ---------- PERSON HANDLING ----------
-        person = find_person_by_email(email["from_email"])
-        if person:
-            person_id = person.get("id")  # safely access the id
-        else:
-            try:
-                person = create_person(email["from_email"], email["from_name"])
-                person_id = person.get("id") if person else None
+        person = get_or_create_person(email["from_email"], email["from_name"])
+        if not person:
+            logging.warning("Skipping email — person unavailable: %s", email["from_email"])
+            continue
+        
+        person_id = person.get("record_id")  # use record_id or whichever field identifies the person in Attio
+
             except requests.HTTPError as e:
                 if e.response.status_code == 400 and "uniqueness" in e.response.text.lower():
                     logging.info("Uniqueness conflict, refetching person")
