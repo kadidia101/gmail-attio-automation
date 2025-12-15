@@ -98,40 +98,42 @@ def email_already_ingested(message_id):
 
 def find_person_by_email(email):
     payload = {
-        "filter": {
-            "primary_email_address": {
-                "equals": email
-            }
-        },
+        "query": email,
         "limit": 1
     }
 
     r = requests.post(
-        f"{ATTIO_BASE}/objects/people/records/query",
+        f"{ATTIO_BASE}/objects/people/records/search",
         headers=ATTIO_HEADERS,
         json=payload,
     )
 
     if r.status_code != 200:
         logging.error(
-            "Attio person query failed | status=%s | response=%s | payload=%s",
+            "Attio person search failed | status=%s | response=%s",
             r.status_code,
             r.text,
-            payload,
         )
         return None
 
-    records = r.json().get("records", [])
-    return records[0] if records else None
+    results = r.json().get("data", [])
+    if not results:
+        return None
+
+    person = results[0]
+    logging.info(
+        "Matched person | email=%s | person_id=%s",
+        email,
+        person["id"],
+    )
+    return person
 
 def create_person(email, name):
     payload = {
         "data": {
             "values": {
                 "name": name or email,
-                "email_addresses": [
-                    {"email_address": email}
-                ]
+                "email_addresses": [{"email_address": email}],
             }
         }
     }
@@ -142,17 +144,23 @@ def create_person(email, name):
         json=payload,
     )
 
-    if r.status_code != 200:
-        logging.warning(
-            "Cannot create person %s | status=%s | response=%s | payload=%s",
-            email,
-            r.status_code,
-            r.text,
-            payload,
-        )
-        return None
+    if r.status_code in (200, 201):
+        person = r.json()["data"]
+        logging.info("Created person | email=%s | person_id=%s", email, person["id"])
+        return person
 
-    return r.json()["data"]
+    # uniqueness conflict = someone else already created it
+    if r.status_code == 400 and "uniqueness" in r.text.lower():
+        logging.warning("Uniqueness conflict — retrying lookup for %s", email)
+        return find_person_by_email(email)
+
+    logging.warning(
+        "Cannot create person %s | status=%s | response=%s",
+        email,
+        r.status_code,
+        r.text,
+    )
+    return None
 
 def find_company_by_domain(domain):
     r = requests.post(
