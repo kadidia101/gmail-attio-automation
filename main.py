@@ -99,7 +99,7 @@ def email_already_ingested(message_id):
 def find_person_by_email(email):
     payload = {
         "filter": {
-            "email_addresses.email_address": {
+            "primary_email_address": {
                 "equals": email
             }
         },
