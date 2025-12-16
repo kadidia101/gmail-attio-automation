@@ -73,10 +73,13 @@ def get_domain(email):
 # =======================
 # ATTIO HELPERS
 # =======================
-def get_or_create_company(domain):
-    # 1️⃣ Search for existing company by domain
+def find_company_by_domain(domain):
+    """
+    Search Attio companies for a given domain.
+    Returns the record_id if found, else None.
+    """
     search_url = f"{ATTIO_BASE}/objects/companies/records/search"
-    search_payload = {
+    payload = {
         "query": {
             "filters": [
                 {
@@ -88,16 +91,23 @@ def get_or_create_company(domain):
         }
     }
 
-    resp = requests.post(search_url, headers=ATTIO_HEADERS, json=search_payload)
+    resp = requests.post(search_url, headers=ATTIO_HEADERS, json=payload)
     if resp.status_code == 200:
-        results = resp.json().get("records", [])
-        if results:
-            company = results[0]
+        records = resp.json().get("records", [])
+        if records:
+            company = records[0]
             logging.info("Found existing company | domain=%s | record_id=%s", domain, company["record_id"])
             return company["record_id"]
+    else:
+        logging.warning("Failed to search company for domain %s: %s", domain, resp.text)
+    return None
 
-    # 2️⃣ If not found, create new company
-    create_payload = {
+def create_company(domain):
+    """
+    Creates a new company with the given domain.
+    Returns record_id if successful, else None.
+    """
+    payload = {
         "data": {
             "values": {
                 "name": domain,
@@ -105,20 +115,27 @@ def get_or_create_company(domain):
             }
         }
     }
-    create_resp = requests.post(f"{ATTIO_BASE}/objects/companies/records", headers=ATTIO_HEADERS, json=create_payload)
-    if create_resp.status_code in (200, 201):
-        company = create_resp.json()
+
+    resp = requests.post(f"{ATTIO_BASE}/objects/companies/records", headers=ATTIO_HEADERS, json=payload)
+    if resp.status_code in (200, 201):
+        company = resp.json()
         logging.info("Created new company | domain=%s | record_id=%s", domain, company["record_id"])
         return company["record_id"]
     else:
-        logging.warning("Failed to create company for domain %s: %s", domain, create_resp.text)
+        logging.warning("Failed to create company for domain %s: %s", domain, resp.text)
         return None
+
+def get_or_create_company(domain):
+    company_id = find_company_by_domain(domain)
+    if company_id:
+        return company_id
+    return create_company(domain)
+
 def assert_person_with_company(name, email):
     domain = get_domain(email)
-
     company_id = get_or_create_company(domain)
     if not company_id:
-        logging.warning("Cannot assert person because company could not be created/found: %s", domain)
+        logging.warning("Cannot assert person because company could not be found or created: %s", domain)
         return None
 
     # Split name
@@ -130,13 +147,7 @@ def assert_person_with_company(name, email):
     payload = {
         "data": {
             "values": {
-                "name": [
-                    {
-                        "first_name": first_name,
-                        "last_name": last_name,
-                        "full_name": name
-                    }
-                ],
+                "name": [{"first_name": first_name, "last_name": last_name, "full_name": name}],
                 "email_addresses": [{"email_address": email}],
                 "company": [{"target_object": "companies", "target_record_id": company_id}]
             }
