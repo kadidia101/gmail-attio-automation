@@ -182,6 +182,9 @@ def assert_person_with_company(name, email):
 # =======================
 # MAIN SYNC
 # =======================
+# =======================
+# MAIN SYNC
+# =======================
 def sync_group_to_attio(max_results=50):
     service = get_gmail_service()
     messages = fetch_messages(service, max_results)
@@ -189,28 +192,35 @@ def sync_group_to_attio(max_results=50):
 
     for m in messages:
         email_msg = parse_message(service, m["id"])
-        logging.info("Processing message ID: %s | subject: %s", email_msg["message_id"], email_msg["subject"])
+        logging.info("Processing message ID: %s", email_msg["message_id"])
 
-        # Get original sender
-        sender_name, sender_email = get_original_sender(email_msg["headers"])
-        if not sender_email:
-            logging.warning("No valid sender found for message ID: %s", email_msg["message_id"])
-            continue
-
-        # Gather all involved emails: sender + recipients
+        # Collect all participants
+        from_email = email_msg["from_email"]
+        from_name = email_msg["from_name"]
         recipients = get_all_recipients(email_msg["headers"])
-        all_emails = [sender_email] + recipients
-        logging.debug("All emails to process for Attio: %s", all_emails)
+        all_emails = [from_email] + recipients
 
-        for e in all_emails:
-            # Use local part as fallback name if no display name
-            local_name = e.split("@")[0]
-            person = assert_person_with_company(name=local_name, email=e)
+        logging.debug("All emails in message: %s", all_emails)
+
+        # Build a map of email -> name
+        email_name_map = {from_email: from_name}
+        for r in recipients:
+            # Default name is local part if no better info
+            local_name = r.split("@")[0]
+            email_name_map[r] = local_name
+
+        # Assert each person in Attio
+        for email_addr in all_emails:
+            name = email_name_map.get(email_addr, email_addr.split("@")[0])
+            logging.info("Asserting person: %s <%s>", name, email_addr)
+            person = assert_person_with_company(name=name, email=email_addr)
             if not person:
-                logging.warning("Could not assert person: %s", e)
+                logging.warning("Failed to assert person: %s", email_addr)
             else:
-                logging.info("Person asserted: %s | record_id=%s", e, person.get("record_id"))
+                logging.info("Person asserted: %s | record_id=%s", email_addr, person.get("record_id"))
+
         logging.info("Finished processing message ID: %s", email_msg["message_id"])
+
         
 # =======================
 # ENTRYPOINT (5-min loop)
