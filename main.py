@@ -251,7 +251,7 @@ def sync_group_to_attio(max_results=50):
             logging.warning("Skipping email because person could not be asserted: %s", email["from_email"])
             continue
 
-        create_email_record(person["record_id"], email)
+        #create_email_record(person["record_id"], email)
 
 # =======================
 # ENTRYPOINT (5-min loop)
