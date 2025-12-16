@@ -82,12 +82,36 @@ def create_person(name, email, headers):
     }
 
     r = requests.post(
-        "https://api.attio.com/v2/objects/people/records",
+        f"{ATTIO_BASE}/objects/people/records",
         headers=headers,
         json=data
     )
 
-    if r.status_code != 200:
+    if r.status_code == 400:
+        resp_json = r.json()
+        if resp_json.get("code") == "uniqueness_conflict":
+            logging.info("Person already exists | email=%s. Refetching record...", email)
+            # Refetch the existing person by email
+            query_payload = {
+                "filter": {
+                    "property": "email_addresses",
+                    "values": [email]
+                }
+            }
+            search_resp = requests.post(f"{ATTIO_BASE}/objects/people/query", headers=headers, json=query_payload)
+            if search_resp.status_code == 200:
+                results = search_resp.json().get("results", [])
+                if results:
+                    record = results[0]
+                    logging.info("Fetched existing person | email=%s | record_id=%s", email, record["record_id"])
+                    return record
+            logging.warning("Could not refetch existing person for email: %s", email)
+            return None
+        else:
+            logging.warning("Cannot create person %s: %s", email, r.text)
+            return None
+
+    elif r.status_code != 200:
         logging.warning("Cannot create person %s: %s", email, r.text)
         return None
 
@@ -95,6 +119,7 @@ def create_person(name, email, headers):
     record_id = resp_json.get("record_id")
     logging.info("Created person | email=%s | record_id=%s", email, record_id)
     return resp_json
+
 
 def create_person(name, email, headers):
     # First, try to find an existing person by email
