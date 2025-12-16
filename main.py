@@ -111,6 +111,63 @@ def get_domain(email):
 # =======================
 # ATTIO
 # =======================
+def get_attio_objects(object_type, limit=50, updated_since=None):
+    """
+    Fetch objects from Attio.
+    - For 'tasks', uses GET /v2/tasks
+    - For other object types, uses POST /v2/objects/{type}/records/query
+    """
+    all_records = []
+    page_count = 0
+
+    if object_type == "tasks":
+        url = f"https://api.attio.com/v2/tasks?limit={limit}"
+        if updated_since:
+            url += f"&updated_after={updated_since}"
+        print(f"[Attio] Fetching tasks from {url}")
+
+        while True:
+            page_count += 1
+            print(f"[Attio] GET page {page_count}...")
+            response = requests.get(url, headers=HEADERS_ATTIO)
+            print(f"[Attio] Response status: {response.status_code}")
+            response.raise_for_status()
+
+            data = response.json().get("data", [])
+            all_records.extend(data)
+            print(f"[Attio] Fetched {len(data)} tasks in page {page_count}")
+
+            # No pagination info for tasks endpoint? Break if fewer than limit
+            if len(data) < limit:
+                break
+
+            # For tasks, Attio may support cursor-based pagination in the future
+            # If so, update url with ?after=<cursor> here
+            break  # remove this break if you implement cursor logic
+
+    else:
+        url = f"https://api.attio.com/v2/objects/{object_type}/records/query"
+        payload = {"limit": limit, "offset": 0}
+        if updated_since:
+            payload["updated_after"] = updated_since
+        print(f"[Attio] Fetching {object_type} via POST {url}")
+
+        while True:
+            page_count += 1
+            print(f"[Attio] POST page {page_count}, offset={payload['offset']}...")
+            response = requests.post(url, headers=HEADERS_ATTIO, json=payload)
+            response.raise_for_status()
+            data = response.json().get("data", [])
+            all_records.extend(data)
+            print(f"[Attio] Fetched {len(data)} records in page {page_count}")
+
+            if len(data) < limit:
+                break
+            payload["offset"] += limit
+
+    print(f"[Attio] Total {len(all_records)} {object_type} fetched in {page_count} page(s)")
+    return all_records
+
 def extract_record_id(resp_json):
     return (
         resp_json.get("record_id")
