@@ -71,19 +71,22 @@ def parse_message(service, msg_id):
 # =======================
 # ATTIO HELPERS
 # =======================
-def create_person(name, email):
+def create_person(name, email, headers):
     data = {
-        "values": {
-            "name": name,
-            "email_addresses": [{"email_address": email}]
+        "data": {
+            "values": {
+                "name": name,
+                "email_addresses": [{"email_address": email}]
+            }
         }
     }
+
     r = requests.post(
         "https://api.attio.com/v2/objects/people/records",
         headers=headers,
         json=data
     )
-    
+
     if r.status_code != 200:
         logging.warning("Cannot create person %s: %s", email, r.text)
         return None
