@@ -53,17 +53,6 @@ def fetch_messages(service, max_results=50):
         return []
 
 def parse_message(service, msg_id):
-    logging.info("RAW HEADERS DUMP:")
-    for k, v in headers.items():
-        if any(x in k for x in [
-            "from",
-            "reply",
-            "sender",
-            "return",
-            "original",
-            "google",
-        ]):
-            logging.info("  %s: %s", k, v)
 
     msg = service.users().messages().get(
         userId="me",
@@ -81,6 +70,18 @@ def parse_message(service, msg_id):
     subject = headers.get("subject", "")
     message_id = headers.get("message-id")
 
+    logging.info("RAW HEADERS DUMP:")
+    for k, v in headers.items():
+        if any(x in k for x in [
+            "from",
+            "reply",
+            "sender",
+            "return",
+            "original",
+            "google",
+        ]):
+            logging.info("  %s: %s", k, v)
+            
     return {
         "from_name": from_name,
         "from_email": from_email.lower(),
