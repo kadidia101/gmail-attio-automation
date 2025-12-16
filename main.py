@@ -48,9 +48,14 @@ def parse_message(service, msg_id):
     msg = service.users().messages().get(userId="me", id=msg_id, format="full").execute()
     headers = {h["name"].lower(): h["value"] for h in msg["payload"]["headers"]}
 
-    # Try to find original sender
-    original_from = headers.get("x-original-from") or headers.get("return-path") or headers.get("from", "")
-    sender_name, sender_email = parseaddr(original_from)
+    # Start with the Gmail "From" field
+    sender_name, sender_email = parseaddr(headers.get("from", ""))
+
+    # If the sender is the automation address, try to find the original sender
+    if sender_email.lower() in IGNORE_EMAILS:
+        original_from = headers.get("x-original-from") or headers.get("return-path") or ""
+        if original_from:
+            sender_name, sender_email = parseaddr(original_from)
 
     subject = headers.get("subject", "")
     message_id = headers.get("message-id")
