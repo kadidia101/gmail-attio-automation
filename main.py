@@ -12,225 +12,196 @@ import requests
 # =======================
 SERVICE_ACCOUNT_FILE = "/home/ec2-user/.secrets/service_account.json"
 GROUP_EMAIL = "kadidia.sylla@mithrildefense.com"
+
+IGNORE_EMAILS = {
+    GROUP_EMAIL,
+    "automation@mithrildefense.com",
+}
+
 ATTIO_TOKEN = os.environ["ATTIO_TOKEN"]
 ATTIO_BASE = "https://api.attio.com/v2"
 ATTIO_HEADERS = {
     "Authorization": f"Bearer {ATTIO_TOKEN}",
     "Content-Type": "application/json",
 }
+
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s"
+)
 
 # =======================
-# GMAIL SERVICE
+# GMAIL
 # =======================
 def get_gmail_service():
     creds = service_account.Credentials.from_service_account_file(
         SERVICE_ACCOUNT_FILE,
         scopes=SCOPES,
-        subject=GROUP_EMAIL
+        subject=GROUP_EMAIL,
     )
     return build("gmail", "v1", credentials=creds)
 
-def get_original_sender(headers):
-    """
-    Get the original sender of an email, ignoring automation addresses.
-    Priority: X-Original-From -> Return-Path -> From
-    """
-    for key in ["x-original-from", "return-path", "from"]:
-        value = headers.get(key)
-        if value:
-            name, email = parseaddr(value)
-            email = email.lower()
-            if email and email not in IGNORE_EMAILS:
-                logging.debug("Original sender found: %s <%s> via header %s", name, email, key)
-                return name, email
-            else:
-                logging.debug("Skipping ignored sender: %s <%s> via header %s", name, email, key)
-    # fallback
-    name, email = parseaddr(headers.get("from", ""))
-    logging.debug("Fallback sender used: %s <%s>", name, email)
-    return name, email.lower()
-
-def get_all_recipients(headers):
-    """
-    Extract all recipients (To, Cc, Bcc), ignoring automation emails.
-    """
-    recipients = []
-    for field in ["to", "cc", "bcc"]:
-        if field in headers:
-            for name, email in getaddresses([headers[field]]):
-                email = email.lower()
-                if email and email not in IGNORE_EMAILS:
-                    recipients.append(email)
-                    logging.debug("Recipient added: %s <%s> from header %s", name, email, field)
-                else:
-                    logging.debug("Recipient ignored: %s <%s> from header %s", name, email, field)
-    return recipients
 
 def fetch_messages(service, max_results=50):
-    try:
-        query = f"from:{GROUP_EMAIL}"
-        res = service.users().messages().list(userId="me", maxResults=max_results, q=query).execute()
-        return res.get("messages", [])
-    except Exception as e:
-        logging.error("Failed to fetch messages: %s", e)
-        return []
+    """
+    IMPORTANT:
+    Do NOT filter by from:GROUP_EMAIL
+    That rewrites the sender.
+    """
+    res = service.users().messages().list(
+        userId="me",
+        maxResults=max_results,
+        q=f"to:{GROUP_EMAIL}",
+    ).execute()
+    return res.get("messages", [])
 
-IGNORE_EMAILS = {GROUP_EMAIL, "automation@mithrildefense.com"}
 
 def parse_message(service, msg_id):
-    msg = service.users().messages().get(userId="me", id=msg_id, format="full").execute()
-    headers = {h["name"].lower(): h["value"] for h in msg["payload"]["headers"]}
+    msg = service.users().messages().get(
+        userId="me",
+        id=msg_id,
+        format="full",
+    ).execute()
 
-    # Start with the Gmail "From" field
-    sender_name, sender_email = parseaddr(headers.get("from", ""))
+    headers = {
+        h["name"].lower(): h["value"]
+        for h in msg["payload"]["headers"]
+    }
 
-    # If the sender is the automation address, try to find the original sender
-    if sender_email.lower() in IGNORE_EMAILS:
-        original_from = headers.get("x-original-from") or headers.get("return-path") or ""
-        if original_from:
-            sender_name, sender_email = parseaddr(original_from)
+    from_name, from_email = parseaddr(headers.get("from", ""))
 
     subject = headers.get("subject", "")
     message_id = headers.get("message-id")
 
-    body = ""
-    payload = msg.get("payload", {})
-    if "parts" in payload:
-        for part in payload["parts"]:
-            if part.get("mimeType") == "text/plain" and "data" in part.get("body", {}):
-                body = base64.urlsafe_b64decode(part["body"]["data"]).decode("utf-8", errors="ignore")
-                break
-    elif "body" in payload and "data" in payload["body"]:
-        body = base64.urlsafe_b64decode(payload["body"]["data"]).decode("utf-8", errors="ignore")
-
     return {
-        "from_email": sender_email.lower(),
-        "from_name": sender_name,
-        "subject": subject,
-        "body": body,
-        "message_id": message_id,
+        "from_name": from_name,
+        "from_email": from_email.lower(),
         "headers": headers,
+        "subject": subject,
+        "message_id": message_id,
     }
+
+
+def extract_recipients(headers):
+    recipients = set()
+    for field in ["to", "cc", "bcc"]:
+        if field in headers:
+            for _, email in getaddresses([headers[field]]):
+                email = email.lower()
+                if email and email not in IGNORE_EMAILS:
+                    recipients.add(email)
+    return recipients
+
 
 def get_domain(email):
     return email.split("@")[-1].lower()
 
-def get_all_recipients(headers):
-    recipients = []
-    for field in ["To", "Cc", "Bcc"]:
-        if field in headers:
-            recipients.extend([email.lower() for name, email in getaddresses([headers[field]])])
-    return recipients
-
 # =======================
-# ATTIO HELPERS
+# ATTIO
 # =======================
 def extract_record_id(resp_json):
-    record_id = resp_json.get("record_id")
-    if record_id:
-        return record_id
-    record_id = resp_json.get("data", {}).get("record_id")
-    if record_id:
-        return record_id
-    record_id = resp_json.get("data", {}).get("id", {}).get("record_id")
-    if record_id:
-        return record_id
-    try:
-        record_id = resp_json.get("data", {}).get("values", {}).get("record_id", [{}])[0].get("value")
-        if record_id:
-            return record_id
-    except Exception:
-        pass
-    logging.warning("Could not find record_id in response: %s", resp_json)
-    return None
+    return (
+        resp_json.get("record_id")
+        or resp_json.get("data", {}).get("record_id")
+        or resp_json.get("data", {}).get("id", {}).get("record_id")
+        or resp_json.get("data", {})
+            .get("values", {})
+            .get("record_id", [{}])[0]
+            .get("value")
+    )
+
 
 def assert_person_with_company(name, email):
+    if email in IGNORE_EMAILS:
+        logging.info("Skipping ignored email: %s", email)
+        return None
+
     domain = get_domain(email)
 
     if " " in name.strip():
-        first_name, last_name = name.strip().split(" ", 1)
+        first, last = name.split(" ", 1)
     else:
-        first_name, last_name = name.strip(), ""
+        first, last = name or email.split("@")[0], ""
 
     payload = {
         "data": {
             "values": {
-                "name": [{"first_name": first_name, "last_name": last_name, "full_name": name}],
-                "email_addresses": [{"email_address": email}],
-                "company": [{"target_object": "companies", "domains":[{"domain": domain}]}]
+                "name": [{
+                    "first_name": first,
+                    "last_name": last,
+                    "full_name": f"{first} {last}".strip(),
+                }],
+                "email_addresses": [{
+                    "email_address": email,
+                }],
+                "company": [{
+                    "target_object": "companies",
+                    "domains": [{"domain": domain}],
+                }],
             }
         }
     }
 
     url = f"{ATTIO_BASE}/objects/people/records?matching_attribute=email_addresses"
+
     resp = requests.put(url, headers=ATTIO_HEADERS, json=payload)
 
     if resp.status_code in (200, 201):
-        person_json = resp.json()
-        record_id = extract_record_id(person_json)
-        logging.info("Asserted person | email=%s | record_id=%s | company_domain=%s",
-                     email, record_id, domain)
-        person_json["record_id"] = record_id
-        return person_json
-    else:
-        logging.warning("Failed to assert person %s: %s", email, resp.text)
-        return None
+        record_id = extract_record_id(resp.json())
+        logging.info(
+            "Asserted person | %s <%s> | record_id=%s",
+            name,
+            email,
+            record_id,
+        )
+        return record_id
 
-# =======================
-# MAIN SYNC
-# =======================
+    logging.warning("Failed to assert %s: %s", email, resp.text)
+    return None
+
 # =======================
 # MAIN SYNC
 # =======================
 def sync_group_to_attio(max_results=50):
     service = get_gmail_service()
     messages = fetch_messages(service, max_results)
+
     logging.info("Found %d messages", len(messages))
 
     for m in messages:
-        email_msg = parse_message(service, m["id"])
-        logging.info("Processing message ID: %s", email_msg["message_id"])
+        msg = parse_message(service, m["id"])
 
-        # Collect all participants
-        from_email = email_msg["from_email"]
-        from_name = email_msg["from_name"]
-        recipients = get_all_recipients(email_msg["headers"])
-        all_emails = [from_email] + recipients
+        logging.info("Processing message ID: %s", msg["message_id"])
+        logging.info("FROM header: %s <%s>", msg["from_name"], msg["from_email"])
 
-        logging.debug("All emails in message: %s", all_emails)
+        participants = {}
 
-        # Build a map of email -> name
-        email_name_map = {from_email: from_name}
-        for r in recipients:
-            # Default name is local part if no better info
-            local_name = r.split("@")[0]
-            email_name_map[r] = local_name
+        # Sender
+        if msg["from_email"] and msg["from_email"] not in IGNORE_EMAILS:
+            participants[msg["from_email"]] = msg["from_name"]
 
-        # Assert each person in Attio
-        for email_addr in all_emails:
-            name = email_name_map.get(email_addr, email_addr.split("@")[0])
-            logging.info("Asserting person: %s <%s>", name, email_addr)
-            person = assert_person_with_company(name=name, email=email_addr)
-            if not person:
-                logging.warning("Failed to assert person: %s", email_addr)
-            else:
-                logging.info("Person asserted: %s | record_id=%s", email_addr, person.get("record_id"))
+        # Recipients
+        for r in extract_recipients(msg["headers"]):
+            participants.setdefault(r, r.split("@")[0])
 
-        logging.info("Finished processing message ID: %s", email_msg["message_id"])
+        logging.info("Participants resolved: %s", list(participants.keys()))
 
-        
+        for email, name in participants.items():
+            assert_person_with_company(name=name, email=email)
+
+        logging.info("Finished message %s", msg["message_id"])
+
 # =======================
-# ENTRYPOINT (5-min loop)
+# LOOP
 # =======================
 if __name__ == "__main__":
     while True:
         try:
-            logging.info("Starting Gmail → Attio sync...")
+            logging.info("Starting Gmail → Attio sync")
             sync_group_to_attio(max_results=100)
-            logging.info("Sync complete. Waiting 5 minutes...")
+            logging.info("Sync complete — sleeping 5 minutes")
         except Exception as e:
-            logging.error("Error during sync: %s", e)
-        time.sleep(300)  # 5 minutes
+            logging.exception("Sync failed")
+        time.sleep(300)
