@@ -74,11 +74,6 @@ def parse_message(service, msg_id):
         "headers": headers,
     }
 
-# In the sync loop:
-if email["from_email"] in IGNORE_EMAILS:
-    logging.info("Skipping email from automation address: %s", email["from_email"])
-    continue
-
 def get_domain(email):
     return email.split("@")[-1].lower()
 
@@ -155,9 +150,9 @@ def sync_group_to_attio(max_results=50):
         email_msg = parse_message(service, m["id"])
         logging.info("Processing message ID: %s", email_msg["message_id"])
 
-        if GROUP_EMAIL not in email_msg["from_email"]:
-            logging.info("Skipping email not from group: %s", email_msg["from_email"])
-            continue
+        if email["from_email"] in IGNORE_EMAILS:
+            logging.info("Skipping email from automation address: %s", email["from_email"])
+        continue
         if not email_msg["message_id"]:
             logging.warning("Skipping message with no Message-ID: %s", email_msg)
             continue
