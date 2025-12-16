@@ -20,8 +20,6 @@ ATTIO_HEADERS = {
 }
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 
-COMPANY_DOMAIN_FIELD = "domains"  # Attio company domain field (multiselect)
-
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 # =======================
@@ -69,57 +67,29 @@ def parse_message(service, msg_id):
         "message_id": message_id,
     }
 
-# =======================
-# ATTIO HELPERS
-# =======================
 def get_domain(email):
     return email.split("@")[-1].lower()
 
-def get_or_create_company(domain):
-    # Query existing company
-    query_payload = {"filter": {"property": COMPANY_DOMAIN_FIELD, "values": [domain]}}
-    resp = requests.post(f"{ATTIO_BASE}/objects/companies/query", headers=ATTIO_HEADERS, json=query_payload)
-    if resp.status_code == 200:
-        results = resp.json().get("results", [])
-        if results:
-            return results[0]["record_id"]
-
-    # Create new company
-    data = {"data": {"values": {"name": domain, COMPANY_DOMAIN_FIELD: [domain]}}}
-    create_resp = requests.post(f"{ATTIO_BASE}/objects/companies/records", headers=ATTIO_HEADERS, json=data)
-    if create_resp.status_code == 200:
-        return create_resp.json().get("record_id")
-
-    # If uniqueness conflict occurs, refetch
-    if create_resp.status_code == 400 and create_resp.json().get("code") == "uniqueness_conflict":
-        logging.info("Company already exists | domain=%s. Refetching...", domain)
-        resp2 = requests.post(f"{ATTIO_BASE}/objects/companies/query", headers=ATTIO_HEADERS, json=query_payload)
-        if resp2.status_code == 200:
-            results2 = resp2.json().get("results", [])
-            if results2:
-                return results2[0]["record_id"]
-
-    logging.warning("Failed to create company for domain %s: %s", domain, create_resp.text)
-    return None
-
-def assert_person(name, email, domain=None):
+# =======================
+# ATTIO HELPERS
+# =======================
+def assert_person_with_company(name, email, domain):
     """
-    Asserts a person record in Attio. Automatically creates/updates person and company.
+    Asserts a person record with company inline.
+    Automatically creates/updates person and company based on email and domain.
     """
     payload = {
         "data": {
             "values": {
                 "name": [{"full_name": name}],
                 "email_addresses": [{"email_address": email}],
-            }
+                "company": [
+                    {"domains": [{"domain": domain}]}
+                ]
+            },
+            "matching_attribute": "email_addresses"
         }
     }
-
-    if domain:
-        # attach company by domain inline
-        payload["data"]["values"]["company"] = [
-            {"domains": [{"domain": domain}]}
-        ]
 
     resp = requests.put(f"{ATTIO_BASE}/objects/people/records", headers=ATTIO_HEADERS, json=payload)
 
@@ -162,7 +132,7 @@ def sync_group_to_attio(max_results=50):
         email = parse_message(service, m["id"])
         logging.info("Processing message ID: %s", email["message_id"])
 
-        # Only emails from the group
+        # Only process emails from the group
         if GROUP_EMAIL not in email["from_email"]:
             logging.info("Skipping email not from group: %s", email["from_email"])
             continue
@@ -170,11 +140,11 @@ def sync_group_to_attio(max_results=50):
             logging.warning("Skipping message with no Message-ID: %s", email)
             continue
 
-        company_id = get_or_create_company(get_domain(email["from_email"]))
-        person = assert_person(email["from_name"], email["from_email"], company_id)
+        domain = get_domain(email["from_email"])
+        person = assert_person_with_company(email["from_name"], email["from_email"], domain)
 
         if not person:
-            logging.warning("Skipping email because no person record for %s", email["from_email"])
+            logging.warning("Skipping email because person could not be asserted: %s", email["from_email"])
             continue
 
         create_email_record(person["record_id"], email)
