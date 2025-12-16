@@ -44,12 +44,13 @@ def get_gmail_service():
     return build("gmail", "v1", credentials=creds)
 
 def fetch_messages(service, max_results=50):
-    res = service.users().messages().list(
-        userId="me",
-        maxResults=max_results,
-        q=f"deliveredto:{GROUP_EMAIL}",
-    ).execute()
-    return res.get("messages", [])
+    try:
+        query = f"from:{GROUP_EMAIL}"
+        res = service.users().messages().list(userId="me", maxResults=max_results, q=query).execute()
+        return res.get("messages", [])
+    except Exception as e:
+        logging.error("Failed to fetch messages: %s", e)
+        return []
 
 def parse_message(service, msg_id):
     msg = service.users().messages().get(
