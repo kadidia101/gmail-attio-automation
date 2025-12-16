@@ -149,22 +149,26 @@ def sync_group_to_attio(max_results=50):
     for m in messages:
         email_msg = parse_message(service, m["id"])
         logging.info("Processing message ID: %s", email_msg["message_id"])
-
-        if email["from_email"] in IGNORE_EMAILS:
-            logging.info("Skipping email from automation address: %s", email["from_email"])
-        continue
+    
+        # Skip automation/group email addresses
+        if email_msg["from_email"] in IGNORE_EMAILS:
+            logging.info("Skipping email from automation address: %s", email_msg["from_email"])
+            continue
+    
         if not email_msg["message_id"]:
             logging.warning("Skipping message with no Message-ID: %s", email_msg)
             continue
-
+    
         # Gather all involved emails: sender + recipients
         all_emails = [email_msg["from_email"]] + get_all_recipients(email_msg["headers"])
-
+    
         for e in all_emails:
+            if e in IGNORE_EMAILS:
+                continue
             person = assert_person_with_company(name=e.split("@")[0], email=e)
             if not person:
                 logging.warning("Could not assert person: %s", e)
-            # No need to create email records — Attio handles it automatically
+
 
 # =======================
 # ENTRYPOINT (5-min loop)
