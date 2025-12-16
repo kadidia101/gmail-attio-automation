@@ -204,10 +204,10 @@ def create_email_record(person_id, email):
     payload = {
         "data": {
             "values": {
-                "name": email["subject"],
+                "email_name": email["subject"],
                 "body": email["body"],
-                "from": email["from_email"],
-                "external_message_id": email["message_id"],
+                "created_by": email["from_email"],
+                "record_id": email["message_id"],
                 "person": [{"target_object": "people", "target_record_id": person_id}]
             }
         }
