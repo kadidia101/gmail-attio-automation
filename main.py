@@ -73,26 +73,22 @@ def get_domain(email):
 # =======================
 # ATTIO HELPERS
 # =======================
-def assert_person_with_company(name, email, domain):
-    """
-    Asserts a person with inline company by domain.
-    Automatically creates/updates person and company.
-    """
+def assert_person_with_company(name, email):
     domain = get_domain(email)
     payload = {
         "data": {
             "values": {
                 "name": [{"full_name": name}],
                 "email_addresses": [{"email_address": email}],
-                "company": [
-                    {"domains": [{"domain": domain}]}
-                ]
-            },
-            "matching_attribute": "email_addresses"  # MUST be at this level
+                "company": [{"domains": [{"domain": domain}]}]
+            }
         }
     }
 
-    resp = requests.put(f"{ATTIO_BASE}/objects/people/records", headers=ATTIO_HEADERS, json=payload)
+    # Pass matching_attribute as a query parameter
+    url = f"{ATTIO_BASE}/objects/people/records?matching_attribute=email_addresses"
+
+    resp = requests.put(url, headers=ATTIO_HEADERS, json=payload)
 
     if resp.status_code in (200, 201):
         person = resp.json()
