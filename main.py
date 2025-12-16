@@ -206,7 +206,7 @@ def create_email_record(person_id, email):
                 "email_name": email["subject"],
                 #"created_by": email["from_email"],
                 #"record_id": email["message_id"],
-                "urls": [{"target_object": "people"}, {"target_record": person_id}]
+                "urls": [{"target_object": "people", "target_record": person_id}]
             }
         }
     }
