@@ -155,7 +155,7 @@ def sync_group_to_attio(max_results=50):
             continue
 
         # Attempt to create person
-        person = create_person(email["from_name"], email["from_email"])
+        person = create_person(email["from_name"], email["from_email"], headers)
         if not person:
             logging.warning("Skipping person creation — already exists or cannot create: %s", email["from_email"])
             continue
