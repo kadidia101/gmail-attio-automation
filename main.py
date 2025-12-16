@@ -133,22 +133,35 @@ def get_or_create_company(domain):
 
 def extract_record_id(resp_json):
     """
-    Safely extract the record_id from an Attio response.
-    Returns record_id or None.
+    Extract record_id from an Attio response safely.
+    Checks multiple possible locations.
     """
-    # Try top-level
+    # 1. Top-level
     record_id = resp_json.get("record_id")
     if record_id:
         return record_id
 
-    # Try nested under 'data'
+    # 2. Under 'data'
     record_id = resp_json.get("data", {}).get("record_id")
     if record_id:
         return record_id
 
-    # If still not found, log the full response
+    # 3. Under 'data.id'
+    record_id = resp_json.get("data", {}).get("id", {}).get("record_id")
+    if record_id:
+        return record_id
+
+    # 4. Inside 'values.record_id[0].value'
+    try:
+        record_id = resp_json.get("data", {}).get("values", {}).get("record_id", [{}])[0].get("value")
+        if record_id:
+            return record_id
+    except Exception:
+        pass
+
     logging.warning("Could not find record_id in response: %s", resp_json)
     return None
+
 def assert_person_with_company(name, email):
     domain = get_domain(email)
 
