@@ -11,7 +11,7 @@ import requests
 # CONFIG
 # =======================
 SERVICE_ACCOUNT_FILE = "/home/ec2-user/.secrets/service_account.json"
-GROUP_EMAIL = "kadidia.sylla@mithrildefense.com"  # Your Google Group
+GROUP_EMAIL = "kadidia.sylla@mithrildefense.com"
 ATTIO_TOKEN = os.environ["ATTIO_TOKEN"]
 ATTIO_BASE = "https://api.attio.com/v2"
 ATTIO_HEADERS = {
@@ -75,8 +75,8 @@ def get_domain(email):
 # =======================
 def assert_person_with_company(name, email, domain):
     """
-    Asserts a person record with company inline.
-    Automatically creates/updates person and company based on email and domain.
+    Asserts a person with inline company by domain.
+    Automatically creates/updates person and company.
     """
     payload = {
         "data": {
@@ -87,7 +87,7 @@ def assert_person_with_company(name, email, domain):
                     {"domains": [{"domain": domain}]}
                 ]
             },
-            "matching_attribute": "email_addresses"
+            "matching_attribute": "email_addresses"  # MUST be here, not inside values
         }
     }
 
@@ -132,7 +132,6 @@ def sync_group_to_attio(max_results=50):
         email = parse_message(service, m["id"])
         logging.info("Processing message ID: %s", email["message_id"])
 
-        # Only process emails from the group
         if GROUP_EMAIL not in email["from_email"]:
             logging.info("Skipping email not from group: %s", email["from_email"])
             continue
@@ -161,3 +160,4 @@ if __name__ == "__main__":
         except Exception as e:
             logging.error("Error during sync: %s", e)
         time.sleep(300)  # 5 minutes
+
