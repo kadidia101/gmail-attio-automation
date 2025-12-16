@@ -15,7 +15,7 @@ GROUP_EMAIL = "kadidia.sylla@mithrildefense.com"
 
 IGNORE_EMAILS = {
     GROUP_EMAIL
-    #"automation@mithrildefense.com",
+    "automation@mithrildefense.com",
 }
 
 ATTIO_TOKEN = os.environ["ATTIO_TOKEN"]
