@@ -149,26 +149,30 @@ def sync_group_to_attio(max_results=50):
     for m in messages:
         email_msg = parse_message(service, m["id"])
         logging.info("Processing message ID: %s", email_msg["message_id"])
-    
-        # Skip automation/group email addresses
-        if email_msg["from_email"] in IGNORE_EMAILS:
-            logging.info("Skipping email from automation address: %s", email_msg["from_email"])
-            continue
-    
-        if not email_msg["message_id"]:
-            logging.warning("Skipping message with no Message-ID: %s", email_msg)
-            continue
-    
-        # Gather all involved emails: sender + recipients
-        all_emails = [email_msg["from_email"]] + get_all_recipients(email_msg["headers"])
-    
-        for e in all_emails:
-            if e in IGNORE_EMAILS:
-                continue
-            person = assert_person_with_company(name=e.split("@")[0], email=e)
-            if not person:
-                logging.warning("Could not assert person: %s", e)
 
+        # Determine the original sender
+        original_sender_email = email_msg["from_email"]
+        original_sender_name = email_msg["from_name"]
+
+        # If the email came from the automation address, try to get original sender from headers
+        if original_sender_email in IGNORE_EMAILS:
+            # Gmail forwarded emails often have "Delivered-To" or "Return-Path" in headers
+            original_from = email_msg["headers"].get("x-original-from") or \
+                            email_msg["headers"].get("return-path") or \
+                            email_msg["headers"].get("from") or ""
+            sender_name, sender_email = parseaddr(original_from)
+            if sender_email and sender_email.lower() not in IGNORE_EMAILS:
+                original_sender_email = sender_email.lower()
+                original_sender_name = sender_name or sender_email.split("@")[0]
+
+        if not original_sender_email:
+            logging.warning("No original sender found, skipping message: %s", email_msg["message_id"])
+            continue
+
+        # Assert the original sender in Attio
+        person = assert_person_with_company(name=original_sender_name, email=original_sender_email)
+        if not person:
+            logging.warning("Could not assert original sender: %s", original_sender_email)
 
 # =======================
 # ENTRYPOINT (5-min loop)
