@@ -33,6 +33,42 @@ def get_gmail_service():
     )
     return build("gmail", "v1", credentials=creds)
 
+def get_original_sender(headers):
+    """
+    Get the original sender of an email, ignoring automation addresses.
+    Priority: X-Original-From -> Return-Path -> From
+    """
+    for key in ["x-original-from", "return-path", "from"]:
+        value = headers.get(key)
+        if value:
+            name, email = parseaddr(value)
+            email = email.lower()
+            if email and email not in IGNORE_EMAILS:
+                logging.debug("Original sender found: %s <%s> via header %s", name, email, key)
+                return name, email
+            else:
+                logging.debug("Skipping ignored sender: %s <%s> via header %s", name, email, key)
+    # fallback
+    name, email = parseaddr(headers.get("from", ""))
+    logging.debug("Fallback sender used: %s <%s>", name, email)
+    return name, email.lower()
+
+def get_all_recipients(headers):
+    """
+    Extract all recipients (To, Cc, Bcc), ignoring automation emails.
+    """
+    recipients = []
+    for field in ["to", "cc", "bcc"]:
+        if field in headers:
+            for name, email in getaddresses([headers[field]]):
+                email = email.lower()
+                if email and email not in IGNORE_EMAILS:
+                    recipients.append(email)
+                    logging.debug("Recipient added: %s <%s> from header %s", name, email, field)
+                else:
+                    logging.debug("Recipient ignored: %s <%s> from header %s", name, email, field)
+    return recipients
+
 def fetch_messages(service, max_results=50):
     try:
         query = f"from:{GROUP_EMAIL}"
@@ -153,32 +189,29 @@ def sync_group_to_attio(max_results=50):
 
     for m in messages:
         email_msg = parse_message(service, m["id"])
-        logging.info("Processing message ID: %s", email_msg["message_id"])
+        logging.info("Processing message ID: %s | subject: %s", email_msg["message_id"], email_msg["subject"])
 
-        # Determine the original sender
-        original_sender_email = email_msg["from_email"]
-        original_sender_name = email_msg["from_name"]
-
-        # If the email came from the automation address, try to get original sender from headers
-        if original_sender_email in IGNORE_EMAILS:
-            # Gmail forwarded emails often have "Delivered-To" or "Return-Path" in headers
-            original_from = email_msg["headers"].get("x-original-from") or \
-                            email_msg["headers"].get("return-path") or \
-                            email_msg["headers"].get("from") or ""
-            sender_name, sender_email = parseaddr(original_from)
-            if sender_email and sender_email.lower() not in IGNORE_EMAILS:
-                original_sender_email = sender_email.lower()
-                original_sender_name = sender_name or sender_email.split("@")[0]
-
-        if not original_sender_email:
-            logging.warning("No original sender found, skipping message: %s", email_msg["message_id"])
+        # Get original sender
+        sender_name, sender_email = get_original_sender(email_msg["headers"])
+        if not sender_email:
+            logging.warning("No valid sender found for message ID: %s", email_msg["message_id"])
             continue
 
-        # Assert the original sender in Attio
-        person = assert_person_with_company(name=original_sender_name, email=original_sender_email)
-        if not person:
-            logging.warning("Could not assert original sender: %s", original_sender_email)
+        # Gather all involved emails: sender + recipients
+        recipients = get_all_recipients(email_msg["headers"])
+        all_emails = [sender_email] + recipients
+        logging.debug("All emails to process for Attio: %s", all_emails)
 
+        for e in all_emails:
+            # Use local part as fallback name if no display name
+            local_name = e.split("@")[0]
+            person = assert_person_with_company(name=local_name, email=e)
+            if not person:
+                logging.warning("Could not assert person: %s", e)
+            else:
+                logging.info("Person asserted: %s | record_id=%s", e, person.get("record_id"))
+        logging.info("Finished processing message ID: %s", email_msg["message_id"])
+        
 # =======================
 # ENTRYPOINT (5-min loop)
 # =======================
