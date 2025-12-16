@@ -133,10 +133,6 @@ def get_or_create_company(domain):
 
 def assert_person_with_company(name, email):
     domain = get_domain(email)
-    company_id = get_or_create_company(domain)
-    if not company_id:
-        logging.warning("Cannot assert person because company could not be found or created: %s", domain)
-        return None
 
     # Split name
     if " " in name.strip():
@@ -149,18 +145,32 @@ def assert_person_with_company(name, email):
             "values": {
                 "name": [{"first_name": first_name, "last_name": last_name, "full_name": name}],
                 "email_addresses": [{"email_address": email}],
-                "company": [{"target_object": "companies", "target_record_id": company_id}]
+                "company": [{"target_object": "companies", "domains":[{"domain": domain}]}]
             }
         }
     }
 
     url = f"{ATTIO_BASE}/objects/people/records?matching_attribute=email_addresses"
+
     resp = requests.put(url, headers=ATTIO_HEADERS, json=payload)
 
     if resp.status_code in (200, 201):
         person = resp.json()
-        logging.info("Asserted person | email=%s | record_id=%s | company_id=%s", email, person.get("record_id"), company_id)
+        logging.info("Asserted person | email=%s | record_id=%s | company_domain=%s",
+                     email, person.get("record_id"), domain)
         return person
+
+    elif resp.status_code == 400 and "uniqueness_conflict" in resp.text:
+        # Uniqueness conflict: extract record_id from the API response if possible
+        try:
+            person = resp.json()
+            record_id = person.get("record_id")
+            logging.info("Person already exists | email=%s | record_id=%s", email, record_id)
+            return person
+        except Exception:
+            logging.warning("Uniqueness conflict, but could not extract record_id: %s", resp.text)
+            return None
+
     else:
         logging.warning("Failed to assert person %s: %s", email, resp.text)
         return None
