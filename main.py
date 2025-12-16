@@ -53,6 +53,18 @@ def fetch_messages(service, max_results=50):
         return []
 
 def parse_message(service, msg_id):
+    logging.info("RAW HEADERS DUMP:")
+    for k, v in headers.items():
+        if any(x in k for x in [
+            "from",
+            "reply",
+            "sender",
+            "return",
+            "original",
+            "google",
+        ]):
+            logging.info("  %s: %s", k, v)
+
     msg = service.users().messages().get(
         userId="me",
         id=msg_id,
