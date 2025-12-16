@@ -178,19 +178,27 @@ def sync_group_to_attio(max_results=50):
     logging.info("Found %d messages", len(messages))
 
     for m in messages:
-        email_msg = parse_message(service, m["id"])
-        logging.info("Processing message ID: %s | FROM: %s", email_msg["message_id"], email_msg["from_email"])
-    
-        # Show email subject in terminal
-        logging.info("Subject: %s", email_msg["subject"])
-    
-        # Optional: show first 200 chars of body
-        logging.info("Body preview: %s", email_msg["body"][:200].replace("\n", " "))
-    
-        # Participants: original sender + recipients (ignore automation/group)
-        participants = [email_msg["from_email"]] + [r for r in email_msg["recipients"] if r not in IGNORE_EMAILS]
-        logging.info("Participants resolved: %s", participants)
+        msg = parse_message(service, m["id"])
 
+        logging.info("Processing message ID: %s", msg["message_id"])
+        logging.info("FROM header: %s <%s>", msg["from_name"], msg["from_email"])
+
+        participants = {}
+
+        # Sender
+        if msg["from_email"] and msg["from_email"] not in IGNORE_EMAILS:
+            participants[msg["from_email"]] = msg["from_name"]
+
+        # Recipients
+        for r in extract_recipients(msg["headers"]):
+            participants.setdefault(r, r.split("@")[0])
+
+        logging.info("Participants resolved: %s", list(participants.keys()))
+
+        for email, name in participants.items():
+            assert_person_with_company(name=name, email=email)
+
+        logging.info("Finished message %s", msg["message_id"])
 
 # =======================
 # LOOP
