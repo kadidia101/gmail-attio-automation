@@ -202,14 +202,17 @@ def assert_person_with_company(name, email):
 
 def create_email_record(person_id, email):
     payload = {
-        "values": {
-            "subject": email["subject"],
-            "body": email["body"],
-            "from": email["from_email"],
-            "external_message_id": email["message_id"],
-            "person": [{"target_object": "people", "target_record_id": person_id}]
+        "data": {
+            "values": {
+                "subject": email["subject"],
+                "body": email["body"],
+                "from": email["from_email"],
+                "external_message_id": email["message_id"],
+                "person": [{"target_object": "people", "target_record_id": person_id}]
+            }
         }
     }
+
     r = requests.post(f"{ATTIO_BASE}/objects/emails/records", headers=ATTIO_HEADERS, json=payload)
     try:
         r.raise_for_status()
@@ -218,6 +221,7 @@ def create_email_record(person_id, email):
     except requests.HTTPError as e:
         logging.warning("Cannot create email record for %s: %s", email["from_email"], e.response.text)
         return None
+
 
 # =======================
 # MAIN SYNC
