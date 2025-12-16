@@ -78,6 +78,7 @@ def assert_person_with_company(name, email, domain):
     Asserts a person with inline company by domain.
     Automatically creates/updates person and company.
     """
+    domain = get_domain(email)
     payload = {
         "data": {
             "values": {
@@ -87,7 +88,7 @@ def assert_person_with_company(name, email, domain):
                     {"domains": [{"domain": domain}]}
                 ]
             },
-            "matching_attribute": "email_addresses"  # MUST be here, not inside values
+            "matching_attribute": "email_addresses"  # MUST be at this level
         }
     }
 
