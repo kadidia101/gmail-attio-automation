@@ -72,25 +72,26 @@ def parse_message(service, msg_id):
 # ATTIO HELPERS
 # =======================
 def create_person(name, email):
-    payload = {
-        "data": {
-            "values": {
-                "name": name or email,
-                "email_addresses": [{"email_address": email}]
-            }
+    data = {
+        "values": {
+            "name": name,
+            "email_addresses": [{"email_address": email}]
         }
     }
-    r = requests.post(f"{ATTIO_BASE}/objects/people/records", headers=ATTIO_HEADERS, json=payload)
-    try:
-        r.raise_for_status()
-        logging.info("Created person | email=%s | record_id=%s", email, r.json()["record_id"])
-        return r.json()
-    except requests.HTTPError as e:
-        if e.response.status_code == 400 and "uniqueness" in e.response.text.lower():
-            logging.info("Person already exists (uniqueness conflict): %s", email)
-            return None
-        logging.warning("Cannot create person %s: %s", email, e.response.text)
+    r = requests.post(
+        "https://api.attio.com/v2/objects/people/records",
+        headers=headers,
+        json=data
+    )
+    
+    if r.status_code != 200:
+        logging.warning("Cannot create person %s: %s", email, r.text)
         return None
+
+    resp_json = r.json()
+    record_id = resp_json.get("record_id")
+    logging.info("Created person | email=%s | record_id=%s", email, record_id)
+    return resp_json
 
 def create_email_record(person_id, email):
     payload = {
@@ -134,12 +135,12 @@ def sync_group_to_attio(max_results=50):
 
         # Attempt to create person
         person = create_person(email["from_name"], email["from_email"])
-        if person:
-            person_id = person["record_id"]
-        else:
-            logging.info("Skipping person creation — assuming already exists or cannot create: %s", email["from_email"])
-            # In a production version, you could fetch the existing person's record_id here if needed
+        if not person:
+            logging.warning("Skipping person creation — already exists or cannot create: %s", email["from_email"])
             continue
+        
+        person_id = person.get("record_id")
+
 
         create_email_record(person_id, email)
 
