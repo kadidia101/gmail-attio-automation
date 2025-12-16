@@ -2,7 +2,7 @@ import os
 import time
 import base64
 import logging
-from email.utils import parseaddr
+from email.utils import parseaddr, getaddresses
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 import requests
@@ -21,6 +21,7 @@ ATTIO_HEADERS = {
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+
 # =======================
 # GMAIL SERVICE
 # =======================
@@ -64,100 +65,38 @@ def parse_message(service, msg_id):
         "subject": subject,
         "body": body,
         "message_id": message_id,
+        "headers": headers
     }
 
 def get_domain(email):
     return email.split("@")[-1].lower()
 
+def get_all_recipients(headers):
+    recipients = []
+    for field in ["To", "Cc", "Bcc"]:
+        if field in headers:
+            recipients.extend([email.lower() for name, email in getaddresses([headers[field]])])
+    return recipients
+
 # =======================
 # ATTIO HELPERS
 # =======================
-def find_company_by_domain(domain):
-    """
-    Search Attio companies for a given domain.
-    Returns the record_id if found, else None.
-    """
-    search_url = f"{ATTIO_BASE}/objects/companies/records/search"
-    payload = {
-        "query": {
-            "filters": [
-                {
-                    "attribute": "domains",
-                    "operator": "contains",
-                    "value": [{"domain": domain}]
-                }
-            ]
-        }
-    }
-
-    resp = requests.post(search_url, headers=ATTIO_HEADERS, json=payload)
-    if resp.status_code == 200:
-        records = resp.json().get("records", [])
-        if records:
-            company = records[0]
-            logging.info("Found existing company | domain=%s | record_id=%s", domain, company["record_id"])
-            return company["record_id"]
-    else:
-        logging.warning("Failed to search company for domain %s: %s", domain, resp.text)
-    return None
-
-def create_company(domain):
-    """
-    Creates a new company with the given domain.
-    Returns record_id if successful, else None.
-    """
-    payload = {
-        "data": {
-            "values": {
-                "name": domain,
-                "domains": [{"domain": domain}]
-            }
-        }
-    }
-
-    resp = requests.post(f"{ATTIO_BASE}/objects/companies/records", headers=ATTIO_HEADERS, json=payload)
-    if resp.status_code in (200, 201):
-        company = resp.json()
-        logging.info("Created new company | domain=%s | record_id=%s", domain, company["record_id"])
-        return company["record_id"]
-    else:
-        logging.warning("Failed to create company for domain %s: %s", domain, resp.text)
-        return None
-
-def get_or_create_company(domain):
-    company_id = find_company_by_domain(domain)
-    if company_id:
-        return company_id
-    return create_company(domain)
-
 def extract_record_id(resp_json):
-    """
-    Extract record_id from an Attio response safely.
-    Checks multiple possible locations.
-    """
-    # 1. Top-level
     record_id = resp_json.get("record_id")
     if record_id:
         return record_id
-
-    # 2. Under 'data'
     record_id = resp_json.get("data", {}).get("record_id")
     if record_id:
         return record_id
-
-    # 3. Under 'data.id'
     record_id = resp_json.get("data", {}).get("id", {}).get("record_id")
     if record_id:
         return record_id
-
-    # 4. Inside 'values.record_id[0].value'
     try:
         record_id = resp_json.get("data", {}).get("values", {}).get("record_id", [{}])[0].get("value")
         if record_id:
             return record_id
     except Exception:
         pass
-
     logging.warning("Could not find record_id in response: %s", resp_json)
     return None
 
@@ -185,45 +124,13 @@ def assert_person_with_company(name, email):
     if resp.status_code in (200, 201):
         person_json = resp.json()
         record_id = extract_record_id(person_json)
-        if record_id:
-            logging.info("Asserted person | email=%s | record_id=%s | company_domain=%s",
-                         email, record_id, domain)
-            person_json["record_id"] = record_id
-            return person_json
-        else:
-            logging.warning("Person asserted but record_id missing | email=%s", email)
-            return None
-
+        logging.info("Asserted person | email=%s | record_id=%s | company_domain=%s",
+                     email, record_id, domain)
+        person_json["record_id"] = record_id
+        return person_json
     else:
         logging.warning("Failed to assert person %s: %s", email, resp.text)
         return None
-
-
-def create_email_record(person_id, email):
-    payload = {
-        "data": {
-            "values": {
-                "email_name": email["subject"],
-                #"created_by": email["from_email"],
-                #"record_id": email["message_id"],
-                "urls": [
-                {
-                        "email_addresses": [{"email_address": email.get("from_email")}],
-                        "target_object": "people"
-                    } ]
-            }
-        }
-    }
-
-    r = requests.post(f"{ATTIO_BASE}/objects/emails/records", headers=ATTIO_HEADERS, json=payload)
-    try:
-        r.raise_for_status()
-        logging.info("Synced email from %s", email["from_email"])
-        return r.json()
-    except requests.HTTPError as e:
-        logging.warning("Cannot create email record for %s: %s", email["from_email"], e.response.text)
-        return None
-
 
 # =======================
 # MAIN SYNC
@@ -234,24 +141,24 @@ def sync_group_to_attio(max_results=50):
     logging.info("Found %d messages", len(messages))
 
     for m in messages:
-        email = parse_message(service, m["id"])
-        logging.info("Processing message ID: %s", email["message_id"])
+        email_msg = parse_message(service, m["id"])
+        logging.info("Processing message ID: %s", email_msg["message_id"])
 
-        if GROUP_EMAIL not in email["from_email"]:
-            logging.info("Skipping email not from group: %s", email["from_email"])
+        if GROUP_EMAIL not in email_msg["from_email"]:
+            logging.info("Skipping email not from group: %s", email_msg["from_email"])
             continue
-        if not email["message_id"]:
-            logging.warning("Skipping message with no Message-ID: %s", email)
-            continue
-
-        domain = get_domain(email["from_email"])
-        person = assert_person_with_company(email["from_name"], email["from_email"])
-
-        if not person:
-            logging.warning("Skipping email because person could not be asserted: %s", email["from_email"])
+        if not email_msg["message_id"]:
+            logging.warning("Skipping message with no Message-ID: %s", email_msg)
             continue
 
-        #create_email_record(person["record_id"], email)
+        # Gather all involved emails: sender + recipients
+        all_emails = [email_msg["from_email"]] + get_all_recipients(email_msg["headers"])
+
+        for e in all_emails:
+            person = assert_person_with_company(name=e.split("@")[0], email=e)
+            if not person:
+                logging.warning("Could not assert person: %s", e)
+            # No need to create email records — Attio handles it automatically
 
 # =======================
 # ENTRYPOINT (5-min loop)
@@ -265,4 +172,3 @@ if __name__ == "__main__":
         except Exception as e:
             logging.error("Error during sync: %s", e)
         time.sleep(300)  # 5 minutes
-
