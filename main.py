@@ -45,7 +45,7 @@ def get_gmail_service():
 
 def fetch_messages(service, max_results=50):
     try:
-        query = f"from:{GROUP_EMAIL}"
+        query = f"to:automation@mithrildefense.com"
         res = service.users().messages().list(userId="me", maxResults=max_results, q=query).execute()
         return res.get("messages", [])
     except Exception as e:
