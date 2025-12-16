@@ -1,4 +1,5 @@
 import os
+import time
 import base64
 import logging
 from email.utils import parseaddr
@@ -13,11 +14,13 @@ SERVICE_ACCOUNT_FILE = "/home/ec2-user/.secrets/service_account.json"
 GROUP_EMAIL = "kadidia.sylla@mithrildefense.com"  # Your Google Group
 ATTIO_TOKEN = os.environ["ATTIO_TOKEN"]
 ATTIO_BASE = "https://api.attio.com/v2"
-headers = {
+ATTIO_HEADERS = {
     "Authorization": f"Bearer {ATTIO_TOKEN}",
     "Content-Type": "application/json",
 }
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+
+COMPANY_DOMAIN_FIELD = "domains"  # Correct slug from Attio for multiselect company domain
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
@@ -28,13 +31,11 @@ def get_gmail_service():
     creds = service_account.Credentials.from_service_account_file(
         SERVICE_ACCOUNT_FILE,
         scopes=SCOPES,
-        subject=GROUP_EMAIL  # impersonate the group mailbox
+        subject=GROUP_EMAIL
     )
-    service = build("gmail", "v1", credentials=creds)
-    return service
+    return build("gmail", "v1", credentials=creds)
 
 def fetch_messages(service, max_results=50):
-    """Fetch only messages sent from the Google Group."""
     try:
         query = f"from:{GROUP_EMAIL}"
         res = service.users().messages().list(userId="me", maxResults=max_results, q=query).execute()
@@ -61,7 +62,7 @@ def parse_message(service, msg_id):
         body = base64.urlsafe_b64decode(payload["body"]["data"]).decode("utf-8", errors="ignore")
 
     return {
-        "from_email": sender_email,
+        "from_email": sender_email.lower(),
         "from_name": sender_name,
         "subject": subject,
         "body": body,
@@ -74,38 +75,35 @@ def parse_message(service, msg_id):
 def get_domain(email):
     return email.split("@")[-1].lower()
 
-def get_or_create_company(domain, headers):
-    # Try to find existing company
-    query_payload = {
-        "filter": {
-            "property": "domain",
-            "values": [domain]
-        }
-    }
-    resp = requests.post(f"{ATTIO_BASE}/objects/companies/query", headers=headers, json=query_payload)
+def get_or_create_company(domain):
+    # Try to fetch existing company by domain
+    query_payload = {"filter": {"property": COMPANY_DOMAIN_FIELD, "values": [domain]}}
+    resp = requests.post(f"{ATTIO_BASE}/objects/companies/query", headers=ATTIO_HEADERS, json=query_payload)
     if resp.status_code == 200:
         results = resp.json().get("results", [])
         if results:
             return results[0]["record_id"]
 
-    # If not found, create company
-    data = {
-        "data": {
-            "values": {
-                "name": domain,
-                "domain": domain
-            }
-        }
-    }
-    create_resp = requests.post(f"{ATTIO_BASE}/objects/companies/records", headers=headers, json=data)
+    # Create new company
+    data = {"data": {"values": {"name": domain, COMPANY_DOMAIN_FIELD: [domain]}}}
+    create_resp = requests.post(f"{ATTIO_BASE}/objects/companies/records", headers=ATTIO_HEADERS, json=data)
     if create_resp.status_code == 200:
         return create_resp.json().get("record_id")
     logging.warning("Failed to create company for domain %s: %s", domain, create_resp.text)
     return None
 
-def create_person(name, email, headers):
+def refetch_person(email):
+    query_payload = {"filter": {"property": "email_addresses", "values": [{"email_address": email}]}}
+    resp = requests.post(f"{ATTIO_BASE}/objects/people/query", headers=ATTIO_HEADERS, json=query_payload)
+    if resp.status_code == 200:
+        results = resp.json().get("results", [])
+        if results:
+            return results[0]
+    return None
+
+def create_person(name, email):
     domain = get_domain(email)
-    company_id = get_or_create_company(domain, headers)
+    company_id = get_or_create_company(domain)
 
     data = {
         "data": {
@@ -117,28 +115,22 @@ def create_person(name, email, headers):
         }
     }
 
-    r = requests.post(f"{ATTIO_BASE}/objects/people/records", headers=headers, json=data)
+    r = requests.post(f"{ATTIO_BASE}/objects/people/records", headers=ATTIO_HEADERS, json=data)
 
     if r.status_code == 400:
         resp_json = r.json()
         if resp_json.get("code") == "uniqueness_conflict":
             logging.info("Person already exists | email=%s. Refetching record...", email)
-            # Refetch existing person
-            query_payload = {"filter": {"property": "email_addresses", "values": [email]}}
-            search_resp = requests.post(f"{ATTIO_BASE}/objects/people/query", headers=headers, json=query_payload)
-            if search_resp.status_code == 200:
-                results = search_resp.json().get("results", [])
-                if results:
-                    record = results[0]
-                    # Attach company if not already attached
-                    if company_id:
-                        requests.patch(
-                            f"{ATTIO_BASE}/objects/people/records/{record['record_id']}",
-                            headers=headers,
-                            json={"data": {"values": {"company": [{"target_object": "companies", "target_record_id": company_id}]}}}
-                        )
-                    logging.info("Fetched existing person | email=%s | record_id=%s", email, record["record_id"])
-                    return record
+            person = refetch_person(email)
+            if person:
+                # Attach company if needed
+                if company_id:
+                    requests.patch(
+                        f"{ATTIO_BASE}/objects/people/records/{person['record_id']}",
+                        headers=ATTIO_HEADERS,
+                        json={"data": {"values": {"company": [{"target_object": "companies", "target_record_id": company_id}]}}}
+                    )
+                return person
             logging.warning("Could not find existing person for email: %s", email)
             return None
         else:
@@ -149,11 +141,28 @@ def create_person(name, email, headers):
         logging.warning("Cannot create person %s: %s", email, r.text)
         return None
 
-    resp_json = r.json()
-    record_id = resp_json.get("record_id")
-    logging.info("Created person | email=%s | record_id=%s | company=%s", email, record_id, domain)
-    return resp_json
+    person = r.json()
+    logging.info("Created person | email=%s | record_id=%s", email, person.get("record_id"))
+    return person
 
+def create_email_record(person_id, email):
+    payload = {
+        "values": {
+            "subject": email["subject"],
+            "body": email["body"],
+            "from": email["from_email"],
+            "external_message_id": email["message_id"],
+            "person": [{"target_object": "people", "target_record_id": person_id}]
+        }
+    }
+    r = requests.post(f"{ATTIO_BASE}/objects/emails/records", headers=ATTIO_HEADERS, json=payload)
+    try:
+        r.raise_for_status()
+        logging.info("Synced email from %s", email["from_email"])
+        return r.json()
+    except requests.HTTPError as e:
+        logging.warning("Cannot create email record for %s: %s", email["from_email"], e.response.text)
+        return None
 
 # =======================
 # MAIN SYNC
@@ -167,31 +176,25 @@ def sync_group_to_attio(max_results=50):
         email = parse_message(service, m["id"])
         logging.info("Processing message ID: %s", email["message_id"])
 
-        # Filter only emails from the Google Group
+        # Only emails from the group
         if GROUP_EMAIL not in email["from_email"]:
             logging.info("Skipping email not from group: %s", email["from_email"])
             continue
-
         if not email["message_id"]:
             logging.warning("Skipping message with no Message-ID: %s", email)
             continue
 
-        # Attempt to create person
-        person = create_person(email["from_name"], email["from_email"], headers)
+        person = create_person(email["from_name"], email["from_email"])
         if not person:
-            logging.warning("Skipping person creation — already exists or cannot create: %s", email["from_email"])
+            logging.warning("Skipping email because no person record for %s", email["from_email"])
             continue
-        
-        person_id = person.get("record_id")
 
-
+        person_id = person["record_id"]
         create_email_record(person_id, email)
 
 # =======================
-# ENTRYPOINT
+# ENTRYPOINT (5-min loop)
 # =======================
-import time
-
 if __name__ == "__main__":
     while True:
         try:
@@ -200,6 +203,4 @@ if __name__ == "__main__":
             logging.info("Sync complete. Waiting 5 minutes...")
         except Exception as e:
             logging.error("Error during sync: %s", e)
-        
-        time.sleep(300)  # Sleep for 5 minutes
-
+        time.sleep(300)  # 5 minutes
