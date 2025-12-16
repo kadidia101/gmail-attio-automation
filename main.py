@@ -182,7 +182,7 @@ def sync_group_to_attio(max_results=50):
 
         logging.info("Processing message ID: %s", msg["message_id"])
         logging.info("FROM header: %s <%s>", msg["from_name"], msg["from_email"])
-        logging.info("Subject: %s", email_msg["subject"])
+        logging.info("Subject: %s", msg["subject"])
 
         participants = {}
 
