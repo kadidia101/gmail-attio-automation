@@ -137,7 +137,7 @@ def sync_group_to_attio(max_results=50):
             continue
 
         domain = get_domain(email["from_email"])
-        person = assert_person_with_company(email["from_name"], email["from_email"], domain)
+        person = assert_person_with_company(email["from_name"], email["from_email"])
 
         if not person:
             logging.warning("Skipping email because person could not be asserted: %s", email["from_email"])
