@@ -206,11 +206,11 @@ def create_email_record(person_id, email):
                 "email_name": email["subject"]
                 #"created_by": email["from_email"],
                 #"record_id": email["message_id"],
-                #"urls": [
-                #{
-                 #   "target_object": "people",
-                  #  "target_record_id": person_id
-                #}]
+                "urls": [
+                {
+                        "email_addresses": [{"email_address": email.get("from_email")}],
+                        "target_object": "people"
+                    } ]
             }
         }
     }
