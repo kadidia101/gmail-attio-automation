@@ -21,7 +21,20 @@ ATTIO_HEADERS = {
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+# Inspect Email object attributes to get exact slugs
+r = requests.get(
+    f"{ATTIO_BASE}/objects/emails",
+    headers={
+        "Authorization": f"Bearer {ATTIO_TOKEN}",
+        "Content-Type": "application/json"
+    }
+)
 
+if r.status_code == 200:
+    for attr in r.json().get("attributes", []):
+        print(f"Name: {attr['name']}, Slug: {attr['slug']}, Type: {attr['type']}")
+else:
+    print("Failed to fetch email object:", r.text)
 # =======================
 # GMAIL SERVICE
 # =======================
@@ -207,7 +220,7 @@ def create_email_record(person_id, email):
                 "email_name": email["subject"],
                 #"created_by": email["from_email"],
                 #"record_id": email["message_id"],
-                "people": [{"target_object": "people", "target_record_id": person_id}]
+                "people": [{"target_object": "people", "target_record_id": pe_id}]
             }
         }
     }
