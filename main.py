@@ -11,11 +11,10 @@ import requests
 # CONFIG
 # =======================
 SERVICE_ACCOUNT_FILE = "/home/ec2-user/.secrets/service_account.json"
-GROUP_EMAIL = "kadidia.sylla@mithrildefense.com"
+GROUP_EMAIL = "automation@mithrildefense.com"
 
 IGNORE_EMAILS = {
-    GROUP_EMAIL,
-    "automation@mithrildefense.com"
+    GROUP_EMAIL
 }
 
 ATTIO_TOKEN = os.environ["ATTIO_TOKEN"]
@@ -45,12 +44,14 @@ def get_gmail_service():
 
 def fetch_messages(service, max_results=50):
     try:
-        query = f"to:automation@mithrildefense.com"
+        # Fetch all emails sent to the automation inbox
+        query = f"to:{GROUP_EMAIL}"
         res = service.users().messages().list(userId="me", maxResults=max_results, q=query).execute()
         return res.get("messages", [])
     except Exception as e:
         logging.error("Failed to fetch messages: %s", e)
         return []
+
 
 def parse_message(service, msg_id):
 
