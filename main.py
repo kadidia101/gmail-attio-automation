@@ -131,10 +131,27 @@ def get_or_create_company(domain):
         return company_id
     return create_company(domain)
 
+def extract_record_id(resp_json):
+    """
+    Safely extract the record_id from an Attio response.
+    Returns record_id or None.
+    """
+    # Try top-level
+    record_id = resp_json.get("record_id")
+    if record_id:
+        return record_id
+
+    # Try nested under 'data'
+    record_id = resp_json.get("data", {}).get("record_id")
+    if record_id:
+        return record_id
+
+    # If still not found, log the full response
+    logging.warning("Could not find record_id in response: %s", resp_json)
+    return None
 def assert_person_with_company(name, email):
     domain = get_domain(email)
 
-    # Split name
     if " " in name.strip():
         first_name, last_name = name.strip().split(" ", 1)
     else:
@@ -151,29 +168,24 @@ def assert_person_with_company(name, email):
     }
 
     url = f"{ATTIO_BASE}/objects/people/records?matching_attribute=email_addresses"
-
     resp = requests.put(url, headers=ATTIO_HEADERS, json=payload)
 
     if resp.status_code in (200, 201):
-        person = resp.json()
-        logging.info("Asserted person | email=%s | record_id=%s | company_domain=%s",
-                     email, person.get("record_id"), domain)
-        return person
-
-    elif resp.status_code == 400 and "uniqueness_conflict" in resp.text:
-        # Uniqueness conflict: extract record_id from the API response if possible
-        try:
-            person = resp.json()
-            record_id = person.get("record_id")
-            logging.info("Person already exists | email=%s | record_id=%s", email, record_id)
-            return person
-        except Exception:
-            logging.warning("Uniqueness conflict, but could not extract record_id: %s", resp.text)
+        person_json = resp.json()
+        record_id = extract_record_id(person_json)
+        if record_id:
+            logging.info("Asserted person | email=%s | record_id=%s | company_domain=%s",
+                         email, record_id, domain)
+            person_json["record_id"] = record_id
+            return person_json
+        else:
+            logging.warning("Person asserted but record_id missing | email=%s", email)
             return None
 
     else:
         logging.warning("Failed to assert person %s: %s", email, resp.text)
         return None
+
 
 def create_email_record(person_id, email):
     payload = {
