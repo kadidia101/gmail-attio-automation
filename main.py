@@ -20,7 +20,7 @@ ATTIO_HEADERS = {
 }
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 
-COMPANY_DOMAIN_FIELD = "domains"  # Correct slug from Attio for multiselect company domain
+COMPANY_DOMAIN_FIELD = "domains"  # Attio company domain field (multiselect)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
@@ -76,7 +76,7 @@ def get_domain(email):
     return email.split("@")[-1].lower()
 
 def get_or_create_company(domain):
-    # Try to fetch existing company by domain
+    # Query existing company
     query_payload = {"filter": {"property": COMPANY_DOMAIN_FIELD, "values": [domain]}}
     resp = requests.post(f"{ATTIO_BASE}/objects/companies/query", headers=ATTIO_HEADERS, json=query_payload)
     if resp.status_code == 200:
@@ -89,61 +89,46 @@ def get_or_create_company(domain):
     create_resp = requests.post(f"{ATTIO_BASE}/objects/companies/records", headers=ATTIO_HEADERS, json=data)
     if create_resp.status_code == 200:
         return create_resp.json().get("record_id")
+
+    # If uniqueness conflict occurs, refetch
+    if create_resp.status_code == 400 and create_resp.json().get("code") == "uniqueness_conflict":
+        logging.info("Company already exists | domain=%s. Refetching...", domain)
+        resp2 = requests.post(f"{ATTIO_BASE}/objects/companies/query", headers=ATTIO_HEADERS, json=query_payload)
+        if resp2.status_code == 200:
+            results2 = resp2.json().get("results", [])
+            if results2:
+                return results2[0]["record_id"]
+
     logging.warning("Failed to create company for domain %s: %s", domain, create_resp.text)
     return None
 
-def refetch_person(email):
-    query_payload = {"filter": {"property": "email_addresses", "values": [{"email_address": email}]}}
-    resp = requests.post(f"{ATTIO_BASE}/objects/people/query", headers=ATTIO_HEADERS, json=query_payload)
-    if resp.status_code == 200:
-        results = resp.json().get("results", [])
-        if results:
-            return results[0]
-    return None
-
-def create_person(name, email):
-    domain = get_domain(email)
-    company_id = get_or_create_company(domain)
-
+def assert_person(name, email, company_id=None):
+    """
+    Assert a person: creates or updates a person by matching email_addresses.
+    """
     data = {
         "data": {
             "values": {
                 "name": name,
                 "email_addresses": [{"email_address": email}],
-                **({"company": [{"target_object": "companies", "target_record_id": company_id}]} if company_id else {})
-            }
+            },
+            "matching_attribute": "email_addresses"
         }
     }
 
-    r = requests.post(f"{ATTIO_BASE}/objects/people/records", headers=ATTIO_HEADERS, json=data)
+    # Attach company if provided
+    if company_id:
+        data["data"]["values"]["company"] = [{"target_object": "companies", "target_record_id": company_id}]
 
-    if r.status_code == 400:
-        resp_json = r.json()
-        if resp_json.get("code") == "uniqueness_conflict":
-            logging.info("Person already exists | email=%s. Refetching record...", email)
-            person = refetch_person(email)
-            if person:
-                # Attach company if needed
-                if company_id:
-                    requests.patch(
-                        f"{ATTIO_BASE}/objects/people/records/{person['record_id']}",
-                        headers=ATTIO_HEADERS,
-                        json={"data": {"values": {"company": [{"target_object": "companies", "target_record_id": company_id}]}}}
-                    )
-                return person
-            logging.warning("Could not find existing person for email: %s", email)
-            return None
-        else:
-            logging.warning("Cannot create person %s: %s", email, r.text)
-            return None
+    resp = requests.post(f"{ATTIO_BASE}/objects/people/assert", headers=ATTIO_HEADERS, json=data)
 
-    elif r.status_code != 200:
-        logging.warning("Cannot create person %s: %s", email, r.text)
+    if resp.status_code in (200, 201):
+        person = resp.json()
+        logging.info("Asserted person | email=%s | record_id=%s", email, person.get("record_id"))
+        return person
+    else:
+        logging.warning("Failed to assert person %s: %s", email, resp.text)
         return None
-
-    person = r.json()
-    logging.info("Created person | email=%s | record_id=%s", email, person.get("record_id"))
-    return person
 
 def create_email_record(person_id, email):
     payload = {
@@ -184,13 +169,14 @@ def sync_group_to_attio(max_results=50):
             logging.warning("Skipping message with no Message-ID: %s", email)
             continue
 
-        person = create_person(email["from_name"], email["from_email"])
+        company_id = get_or_create_company(get_domain(email["from_email"]))
+        person = assert_person(email["from_name"], email["from_email"], company_id)
+
         if not person:
             logging.warning("Skipping email because no person record for %s", email["from_email"])
             continue
 
-        person_id = person["record_id"]
-        create_email_record(person_id, email)
+        create_email_record(person["record_id"], email)
 
 # =======================
 # ENTRYPOINT (5-min loop)
