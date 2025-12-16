@@ -75,19 +75,30 @@ def get_domain(email):
 # =======================
 def assert_person_with_company(name, email):
     domain = get_domain(email)
+
+    # Split name
+    if " " in name.strip():
+        first_name, last_name = name.strip().split(" ", 1)
+    else:
+        first_name, last_name = name.strip(), ""  # fallback
+
     payload = {
         "data": {
             "values": {
-                "name": [{"full_name": name}],
+                "name": [
+                    {
+                        "first_name": first_name,
+                        "last_name": last_name,
+                        "full_name": name
+                    }
+                ],
                 "email_addresses": [{"email_address": email}],
                 "company": [{"domains": [{"domain": domain}]}]
             }
         }
     }
 
-    # Pass matching_attribute as a query parameter
     url = f"{ATTIO_BASE}/objects/people/records?matching_attribute=email_addresses"
-
     resp = requests.put(url, headers=ATTIO_HEADERS, json=payload)
 
     if resp.status_code in (200, 201):
