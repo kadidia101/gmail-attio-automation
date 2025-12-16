@@ -76,7 +76,7 @@ def create_person(name, email):
         "data": {
             "values": {
                 "name": name or email,
-                "email_addresses": email
+                "email_addresses": [{"email_address": from_email}]
             }
         }
     }
