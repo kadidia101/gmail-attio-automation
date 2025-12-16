@@ -102,25 +102,26 @@ def get_or_create_company(domain):
     logging.warning("Failed to create company for domain %s: %s", domain, create_resp.text)
     return None
 
-def assert_person(name, email, company_id=None):
+def assert_person(name, email, domain=None):
     """
-    Assert a person: creates or updates a person by matching email_addresses.
+    Asserts a person record in Attio. Automatically creates/updates person and company.
     """
-    data = {
+    payload = {
         "data": {
             "values": {
-                "name": name,
+                "name": [{"full_name": name}],
                 "email_addresses": [{"email_address": email}],
-            },
-            "matching_attribute": "email_addresses"
+            }
         }
     }
 
-    # Attach company if provided
-    if company_id:
-        data["data"]["values"]["company"] = [{"target_object": "companies", "target_record_id": company_id}]
+    if domain:
+        # attach company by domain inline
+        payload["data"]["values"]["company"] = [
+            {"domains": [{"domain": domain}]}
+        ]
 
-    resp = requests.post(f"{ATTIO_BASE}/objects/people/assert", headers=ATTIO_HEADERS, json=data)
+    resp = requests.put(f"{ATTIO_BASE}/objects/people/records", headers=ATTIO_HEADERS, json=payload)
 
     if resp.status_code in (200, 201):
         person = resp.json()
