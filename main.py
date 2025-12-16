@@ -203,7 +203,7 @@ def create_email_record(person_id, email):
     payload = {
         "data": {
             "values": {
-                "email_name": email["subject"]
+                "email_name": email["subject"],
                 #"created_by": email["from_email"],
                 #"record_id": email["message_id"],
                 "urls": [
