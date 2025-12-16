@@ -71,41 +71,75 @@ def parse_message(service, msg_id):
 # =======================
 # ATTIO HELPERS
 # =======================
+def get_domain(email):
+    return email.split("@")[-1].lower()
+
+def get_or_create_company(domain, headers):
+    # Try to find existing company
+    query_payload = {
+        "filter": {
+            "property": "domain",
+            "values": [domain]
+        }
+    }
+    resp = requests.post(f"{ATTIO_BASE}/objects/companies/query", headers=headers, json=query_payload)
+    if resp.status_code == 200:
+        results = resp.json().get("results", [])
+        if results:
+            return results[0]["record_id"]
+
+    # If not found, create company
+    data = {
+        "data": {
+            "values": {
+                "name": domain,
+                "domain": domain
+            }
+        }
+    }
+    create_resp = requests.post(f"{ATTIO_BASE}/objects/companies/records", headers=headers, json=data)
+    if create_resp.status_code == 200:
+        return create_resp.json().get("record_id")
+    logging.warning("Failed to create company for domain %s: %s", domain, create_resp.text)
+    return None
+
 def create_person(name, email, headers):
+    domain = get_domain(email)
+    company_id = get_or_create_company(domain, headers)
+
     data = {
         "data": {
             "values": {
                 "name": name,
-                "email_addresses": [{"email_address": email}]
+                "email_addresses": [{"email_address": email}],
+                **({"company": [{"target_object": "companies", "target_record_id": company_id}]} if company_id else {})
             }
         }
     }
 
-    r = requests.post(
-        f"{ATTIO_BASE}/objects/people/records",
-        headers=headers,
-        json=data
-    )
+    r = requests.post(f"{ATTIO_BASE}/objects/people/records", headers=headers, json=data)
 
     if r.status_code == 400:
         resp_json = r.json()
         if resp_json.get("code") == "uniqueness_conflict":
             logging.info("Person already exists | email=%s. Refetching record...", email)
-            # Refetch the existing person by email
-            query_payload = {
-                "filter": {
-                    "property": "email_addresses",
-                    "values": [email]
-                }
-            }
+            # Refetch existing person
+            query_payload = {"filter": {"property": "email_addresses", "values": [email]}}
             search_resp = requests.post(f"{ATTIO_BASE}/objects/people/query", headers=headers, json=query_payload)
             if search_resp.status_code == 200:
                 results = search_resp.json().get("results", [])
                 if results:
                     record = results[0]
+                    # Attach company if not already attached
+                    if company_id:
+                        requests.patch(
+                            f"{ATTIO_BASE}/objects/people/records/{record['record_id']}",
+                            headers=headers,
+                            json={"data": {"values": {"company": [{"target_object": "companies", "target_record_id": company_id}]}}}
+                        )
                     logging.info("Fetched existing person | email=%s | record_id=%s", email, record["record_id"])
                     return record
-            logging.warning("Could not refetch existing person for email: %s", email)
+            logging.warning("Could not find existing person for email: %s", email)
             return None
         else:
             logging.warning("Cannot create person %s: %s", email, r.text)
@@ -117,46 +151,9 @@ def create_person(name, email, headers):
 
     resp_json = r.json()
     record_id = resp_json.get("record_id")
-    logging.info("Created person | email=%s | record_id=%s", email, record_id)
+    logging.info("Created person | email=%s | record_id=%s | company=%s", email, record_id, domain)
     return resp_json
 
-
-def create_person(name, email, headers):
-    # First, try to find an existing person by email
-    search_payload = {
-        "filter": {
-            "property": "email_addresses",
-            "values": [email]
-        }
-    }
-    search_resp = requests.post(f"{ATTIO_BASE}/objects/people/query", headers=headers, json=search_payload)
-    if search_resp.status_code == 200:
-        results = search_resp.json().get("results", [])
-        if results:
-            record = results[0]  # Take the first match
-            logging.info("Person already exists | email=%s | record_id=%s", email, record["record_id"])
-            return record
-
-    # If no existing person, create a new one
-    data = {
-        "data": {
-            "values": {
-                "name": name,
-                "email_addresses": [{"email_address": email}]
-            }
-        }
-    }
-
-    r = requests.post(f"{ATTIO_BASE}/objects/people/records", headers=headers, json=data)
-
-    if r.status_code != 200:
-        logging.warning("Cannot create person %s: %s", email, r.text)
-        return None
-
-    resp_json = r.json()
-    record_id = resp_json.get("record_id")
-    logging.info("Created person | email=%s | record_id=%s", email, record_id)
-    return resp_json
 
 # =======================
 # MAIN SYNC
@@ -193,5 +190,16 @@ def sync_group_to_attio(max_results=50):
 # =======================
 # ENTRYPOINT
 # =======================
+import time
+
 if __name__ == "__main__":
-    sync_group_to_attio(max_results=100)
+    while True:
+        try:
+            logging.info("Starting Gmail → Attio sync...")
+            sync_group_to_attio(max_results=100)
+            logging.info("Sync complete. Waiting 5 minutes...")
+        except Exception as e:
+            logging.error("Error during sync: %s", e)
+        
+        time.sleep(300)  # Sleep for 5 minutes
+
