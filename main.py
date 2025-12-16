@@ -13,7 +13,7 @@ SERVICE_ACCOUNT_FILE = "/home/ec2-user/.secrets/service_account.json"
 GROUP_EMAIL = "kadidia.sylla@mithrildefense.com"  # Your Google Group
 ATTIO_TOKEN = os.environ["ATTIO_TOKEN"]
 ATTIO_BASE = "https://api.attio.com/v2"
-ATTIO_HEADERS = {
+headers = {
     "Authorization": f"Bearer {ATTIO_TOKEN}",
     "Content-Type": "application/json",
 }
