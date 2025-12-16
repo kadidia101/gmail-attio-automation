@@ -14,8 +14,8 @@ SERVICE_ACCOUNT_FILE = "/home/ec2-user/.secrets/service_account.json"
 GROUP_EMAIL = "kadidia.sylla@mithrildefense.com"
 
 IGNORE_EMAILS = {
-    GROUP_EMAIL
-    "automation@mithrildefense.com",
+    GROUP_EMAIL,
+    "automation@mithrildefense.com"
 }
 
 ATTIO_TOKEN = os.environ["ATTIO_TOKEN"]
