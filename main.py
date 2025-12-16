@@ -54,41 +54,43 @@ def fetch_messages(service, max_results=50):
 
 
 def parse_message(service, msg_id):
+    msg = service.users().messages().get(userId="me", id=msg_id, format="full").execute()
+    headers = {h["name"].lower(): h["value"] for h in msg["payload"]["headers"]}
 
-    msg = service.users().messages().get(
-        userId="me",
-        id=msg_id,
-        format="full",
-    ).execute()
+    # Determine original sender first
+    original_from = headers.get("x-original-sender") or headers.get("x-original-from") \
+                    or headers.get("return-path") or headers.get("from", "")
+    from_name, from_email = parseaddr(original_from)
+    from_email = from_email.lower()
 
-    headers = {
-        h["name"].lower(): h["value"]
-        for h in msg["payload"]["headers"]
-    }
+    # Extract recipients
+    recipients = []
+    for field in ["to", "cc", "bcc"]:
+        if field in headers:
+            for name, email in getaddresses([headers[field]]):
+                email = email.lower()
+                if email and email not in IGNORE_EMAILS:
+                    recipients.append(email)
 
-    from_name, from_email = parseaddr(headers.get("from", ""))
+    # Email body
+    body = ""
+    payload = msg.get("payload", {})
+    if "parts" in payload:
+        for part in payload["parts"]:
+            if part.get("mimeType") == "text/plain" and "data" in part.get("body", {}):
+                body = base64.urlsafe_b64decode(part["body"]["data"]).decode("utf-8", errors="ignore")
+                break
+    elif "body" in payload and "data" in payload["body"]:
+        body = base64.urlsafe_b64decode(payload["body"]["data"]).decode("utf-8", errors="ignore")
 
-    subject = headers.get("subject", "")
-    message_id = headers.get("message-id")
-
-    logging.info("RAW HEADERS DUMP:")
-    for k, v in headers.items():
-        if any(x in k for x in [
-            "from",
-            "reply",
-            "sender",
-            "return",
-            "original",
-            "google",
-        ]):
-            logging.info("  %s: %s", k, v)
-            
     return {
         "from_name": from_name,
-        "from_email": from_email.lower(),
+        "from_email": from_email,
+        "recipients": recipients,
+        "subject": headers.get("subject", ""),
+        "body": body,
+        "message_id": headers.get("message-id"),
         "headers": headers,
-        "subject": subject,
-        "message_id": message_id,
     }
 
 
