@@ -68,7 +68,7 @@ def get_gmail_service():
     Uses a credentials JSON to authenticate Gmail API.
     Make sure you have 'token.json' with the Gmail OAuth2 credentials.
     """
-    creds = Credentials.from_authorized_user_file("service_account.json", ["https://www.googleapis.com/auth/gmail.readonly"])
+    creds = Credentials.from_authorized_user_file("token.json", ["https://www.googleapis.com/auth/gmail.readonly"])
     service = build("gmail", "v1", credentials=creds)
     return service
 
