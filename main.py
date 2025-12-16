@@ -14,8 +14,8 @@ SERVICE_ACCOUNT_FILE = "/home/ec2-user/.secrets/service_account.json"
 GROUP_EMAIL = "kadidia.sylla@mithrildefense.com"
 
 IGNORE_EMAILS = {
-    GROUP_EMAIL,
-    "automation@mithrildefense.com",
+    GROUP_EMAIL
+    #"automation@mithrildefense.com",
 }
 
 ATTIO_TOKEN = os.environ["ATTIO_TOKEN"]
@@ -97,7 +97,7 @@ def extract_recipients(headers):
         if field in headers:
             for _, email in getaddresses([headers[field]]):
                 email = email.lower()
-                if email and email not in IGNORE_EMAILS:
+                if email:
                     recipients.add(email)
     return recipients
 
