@@ -42,12 +42,18 @@ def fetch_messages(service, max_results=50):
         logging.error("Failed to fetch messages: %s", e)
         return []
 
+IGNORE_EMAILS = {GROUP_EMAIL, "automation@mithrildefense.com"}
+
 def parse_message(service, msg_id):
     msg = service.users().messages().get(userId="me", id=msg_id, format="full").execute()
-    headers = {h["name"]: h["value"] for h in msg["payload"]["headers"]}
-    sender_name, sender_email = parseaddr(headers.get("From", ""))
-    subject = headers.get("Subject", "")
-    message_id = headers.get("Message-ID")
+    headers = {h["name"].lower(): h["value"] for h in msg["payload"]["headers"]}
+
+    # Try to find original sender
+    original_from = headers.get("x-original-from") or headers.get("return-path") or headers.get("from", "")
+    sender_name, sender_email = parseaddr(original_from)
+
+    subject = headers.get("subject", "")
+    message_id = headers.get("message-id")
 
     body = ""
     payload = msg.get("payload", {})
@@ -65,8 +71,13 @@ def parse_message(service, msg_id):
         "subject": subject,
         "body": body,
         "message_id": message_id,
-        "headers": headers
+        "headers": headers,
     }
+
+# In the sync loop:
+if email["from_email"] in IGNORE_EMAILS:
+    logging.info("Skipping email from automation address: %s", email["from_email"])
+    continue
 
 def get_domain(email):
     return email.split("@")[-1].lower()
