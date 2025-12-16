@@ -73,14 +73,59 @@ def get_domain(email):
 # =======================
 # ATTIO HELPERS
 # =======================
+def get_or_create_company(domain):
+    # 1️⃣ Search for existing company by domain
+    search_url = f"{ATTIO_BASE}/objects/companies/records/search"
+    search_payload = {
+        "query": {
+            "filters": [
+                {
+                    "attribute": "domains",
+                    "operator": "contains",
+                    "value": [{"domain": domain}]
+                }
+            ]
+        }
+    }
+
+    resp = requests.post(search_url, headers=ATTIO_HEADERS, json=search_payload)
+    if resp.status_code == 200:
+        results = resp.json().get("records", [])
+        if results:
+            company = results[0]
+            logging.info("Found existing company | domain=%s | record_id=%s", domain, company["record_id"])
+            return company["record_id"]
+
+    # 2️⃣ If not found, create new company
+    create_payload = {
+        "data": {
+            "values": {
+                "name": domain,
+                "domains": [{"domain": domain}]
+            }
+        }
+    }
+    create_resp = requests.post(f"{ATTIO_BASE}/objects/companies/records", headers=ATTIO_HEADERS, json=create_payload)
+    if create_resp.status_code in (200, 201):
+        company = create_resp.json()
+        logging.info("Created new company | domain=%s | record_id=%s", domain, company["record_id"])
+        return company["record_id"]
+    else:
+        logging.warning("Failed to create company for domain %s: %s", domain, create_resp.text)
+        return None
 def assert_person_with_company(name, email):
     domain = get_domain(email)
+
+    company_id = get_or_create_company(domain)
+    if not company_id:
+        logging.warning("Cannot assert person because company could not be created/found: %s", domain)
+        return None
 
     # Split name
     if " " in name.strip():
         first_name, last_name = name.strip().split(" ", 1)
     else:
-        first_name, last_name = name.strip(), ""  # fallback
+        first_name, last_name = name.strip(), ""
 
     payload = {
         "data": {
@@ -93,7 +138,7 @@ def assert_person_with_company(name, email):
                     }
                 ],
                 "email_addresses": [{"email_address": email}],
-                "company": [{"domains": [{"domain": domain}]}]
+                "company": [{"target_object": "companies", "target_record_id": company_id}]
             }
         }
     }
@@ -103,7 +148,7 @@ def assert_person_with_company(name, email):
 
     if resp.status_code in (200, 201):
         person = resp.json()
-        logging.info("Asserted person | email=%s | record_id=%s", email, person.get("record_id"))
+        logging.info("Asserted person | email=%s | record_id=%s | company_id=%s", email, person.get("record_id"), company_id)
         return person
     else:
         logging.warning("Failed to assert person %s: %s", email, resp.text)
